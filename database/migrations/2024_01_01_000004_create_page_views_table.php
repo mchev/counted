@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -34,9 +33,9 @@ return new class extends Migration
             $table->index(['session_id']); // Session-based queries
         });
 
-        // Add indexes for TEXT columns with key lengths using raw SQL
-        DB::statement('CREATE INDEX page_views_site_url_created_idx ON page_views (site_id, url(255), created_at)');
-        DB::statement('CREATE INDEX page_views_site_referrer_created_idx ON page_views (site_id, referrer(255), created_at)');
+        // Add indexes for TEXT columns using Laravel methods (no key length, works for MySQL and SQLite)
+        $table->index(['site_id', 'url', 'created_at']);
+        $table->index(['site_id', 'referrer', 'created_at']);
     }
 
     public function down(): void

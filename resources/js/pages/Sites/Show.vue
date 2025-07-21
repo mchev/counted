@@ -1,6 +1,5 @@
 <template>
   <AppLayout>
-
       <div class="flex items-center justify-between p-4">
         <div>
           <Heading :title="`${site.name} - Analytics`" />
@@ -263,15 +262,6 @@ const setGranularity = (granularity: 'hourly' | 'daily' | 'monthly') => {
   })
 }
 
-const getDeviceIcon = (device: string): string => {
-  switch (device.toLowerCase()) {
-    case 'mobile': return 'smartphone'
-    case 'tablet': return 'tablet'
-    case 'desktop': return 'monitor'
-    default: return 'monitor'
-  }
-}
-
 // Computed properties
 const formatDateRange = computed(() => {
   if (dateFrom.value && dateTo.value) {
@@ -281,10 +271,6 @@ const formatDateRange = computed(() => {
   }
   return 'Custom Range'
 })
-
-
-
-
 
 // Check if granularity should be locked to hourly
 const isGranularityLocked = computed(() => {
