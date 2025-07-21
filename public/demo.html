@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Counted Analytics Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        .demo-section {
+            margin: 2rem 0;
+            padding: 1rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0.5rem;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        .event-button {
+            background: #10b981;
+        }
+        .event-button:hover {
+            background: #059669;
+        }
+    </style>
+</head>
+<body>
+    <h1>Counted Analytics Demo</h1>
+    <p>This is a demo page to test the analytics tracking functionality. Open your browser's developer tools to see the tracking requests.</p>
+    <p><small>This site uses privacy-focused analytics that respect your browser's Do Not Track setting and don't use cookies for tracking.</small></p>
+
+    <div class="demo-section">
+        <h2>Page View Tracking</h2>
+        <p>This page view should be automatically tracked when you load the page.</p>
+    </div>
+
+    <div class="demo-section">
+        <h2>Event Tracking</h2>
+        <p>Click these buttons to test custom event tracking:</p>
+        <button 
+            data-counted-event="button_click" 
+            data-counted-button-name="demo_button"
+            class="event-button"
+        >
+            Track Button Click
+        </button>
+        <button 
+            data-counted-event="form_submit" 
+            data-counted-form-name="demo_form"
+            class="event-button"
+        >
+            Track Form Submit
+        </button>
+        <button 
+            data-counted-event="download" 
+            data-counted-file-name="demo.pdf"
+            class="event-button"
+        >
+            Track Download
+        </button>
+    </div>
+
+    <div class="demo-section">
+        <h2>Manual Event Tracking</h2>
+        <p>You can also track events manually using JavaScript:</p>
+        <button onclick="trackCustomEvent()">Track Custom Event</button>
+        <button onclick="trackPurchase()">Track Purchase</button>
+    </div>
+
+    <div class="demo-section">
+        <h2>Time on Page</h2>
+        <p>Time spent on this page will be tracked when you navigate away or close the tab.</p>
+    </div>
+
+    <script>
+        // Manual event tracking examples
+        function trackCustomEvent() {
+            if (window.CountedAnalytics) {
+                window.CountedAnalytics.trackEvent('custom_event', {
+                    category: 'demo',
+                    action: 'manual_track',
+                    label: 'custom_button'
+                });
+                alert('Custom event tracked!');
+            } else {
+                alert('Counted Analytics not loaded');
+            }
+        }
+
+        function trackPurchase() {
+            if (window.CountedAnalytics) {
+                window.CountedAnalytics.trackEvent('purchase', {
+                    value: 29.99,
+                    currency: 'USD',
+                    product_id: 'demo_product_123'
+                });
+                alert('Purchase event tracked!');
+            } else {
+                alert('Counted Analytics not loaded');
+            }
+        }
+    </script>
+
+    <script>
+    (function() {
+        var script = document.createElement('script');
+        script.async = true;
+        script.src = 'http://counted.test/analytics.js';
+        script.setAttribute('data-site-id', 'eBYASjlDAbDWCeLs');
+        var entry = document.getElementsByTagName('script')[0];
+        entry.parentNode.insertBefore(script, entry);
+    })();
+    </script>
+</body>
+</html> 

@@ -1,0 +1,8 @@
+- Auto-delete entries no longer required after aggregating (keep current week)
+- Make the cleanup after aggregate optionnal, define it in settings.
+- Auto-aggregate after import
+- On Sites index, don't count all (too long for page load). Instead count aggregated visitors for the last 7 days.
+- Change the logo to the correct site name (app.name)
+- On chart display click to hide legends
+- On chart don't display Y grid
+- Import : Cleanup and return a better progress informations
