@@ -22,7 +22,7 @@ return new class extends Migration
             $table->json('os')->nullable(); // Répartition OS
             $table->json('screen_sizes')->nullable(); // Répartition écrans
             $table->timestamps();
-            
+
             $table->unique(['site_id', 'hour_start']);
             $table->index(['site_id', 'hour_start']);
         });
@@ -41,7 +41,7 @@ return new class extends Migration
             $table->json('os')->nullable();
             $table->json('screen_sizes')->nullable();
             $table->timestamps();
-            
+
             $table->unique(['site_id', 'date']);
             $table->index(['site_id', 'date']);
         });
@@ -60,25 +60,9 @@ return new class extends Migration
             $table->json('os')->nullable();
             $table->json('screen_sizes')->nullable();
             $table->timestamps();
-            
+
             $table->unique(['site_id', 'year_month']);
             $table->index(['site_id', 'year_month']);
-        });
-
-        // Table pour les événements en temps réel (dernières 24h seulement)
-        Schema::create('analytics_realtime', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('site_id')->constrained()->onDelete('cascade');
-            $table->string('session_id', 64);
-            $table->string('page_url');
-            $table->string('referrer')->nullable();
-            $table->string('user_agent')->nullable();
-            $table->string('ip_address', 45)->nullable();
-            $table->json('device_info')->nullable();
-            $table->timestamp('created_at')->useCurrent();
-            
-            $table->index(['site_id', 'created_at']);
-            $table->index(['session_id']);
         });
     }
 
@@ -87,6 +71,5 @@ return new class extends Migration
         Schema::dropIfExists('analytics_monthly');
         Schema::dropIfExists('analytics_daily');
         Schema::dropIfExists('analytics_hourly');
-        Schema::dropIfExists('analytics_realtime');
     }
-}; 
+};

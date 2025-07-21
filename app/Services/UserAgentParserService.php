@@ -10,7 +10,7 @@ class UserAgentParserService
 
     public function __construct()
     {
-        $this->agent = new Agent();
+        $this->agent = new Agent;
     }
 
     public function parse(string $userAgent): array
@@ -47,19 +47,19 @@ class UserAgentParserService
         if ($this->agent->isRobot()) {
             return 'robot';
         }
-        
+
         if ($this->agent->isTablet()) {
             return 'tablet';
         }
-        
+
         if ($this->agent->isMobile()) {
             return 'mobile';
         }
-        
+
         if ($this->agent->isDesktop()) {
             return 'desktop';
         }
-        
+
         return null;
     }
 
@@ -67,11 +67,11 @@ class UserAgentParserService
     {
         $browser = $this->agent->browser();
         $version = $this->agent->version($browser);
-        
+
         if (empty($browser)) {
             return null;
         }
-        
+
         return $version ? "{$browser} {$version}" : $browser;
     }
 
@@ -79,11 +79,11 @@ class UserAgentParserService
     {
         $platform = $this->agent->platform();
         $version = $this->agent->version($platform);
-        
+
         if (empty($platform)) {
             return null;
         }
-        
+
         return $version ? "{$platform} {$version}" : $platform;
     }
 
@@ -91,4 +91,4 @@ class UserAgentParserService
     {
         return $this->agent->platform();
     }
-} 
+}

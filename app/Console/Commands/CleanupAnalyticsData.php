@@ -31,13 +31,14 @@ class CleanupAnalyticsData extends Command
         if ($siteId = $this->option('site')) {
             // Nettoyer un site spécifique
             $site = \App\Models\Site::find($siteId);
-            if (!$site) {
+            if (! $site) {
                 $this->error("Site with ID {$siteId} not found.");
+
                 return 1;
             }
 
             $stats = $cleanupService->cleanupSite($site);
-            
+
             $this->info("✅ Cleanup completed for site: {$site->name}");
             $this->table(
                 ['Metric', 'Count'],
@@ -49,7 +50,7 @@ class CleanupAnalyticsData extends Command
         } else {
             // Nettoyer tous les sites
             $stats = $cleanupService->cleanupOldData();
-            
+
             $this->info('✅ Cleanup completed for all sites');
             $this->table(
                 ['Metric', 'Count'],

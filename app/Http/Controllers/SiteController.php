@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Helpers\DatabaseHelper;
 use App\Models\Site;
+use App\Services\FaviconService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -69,6 +71,7 @@ class SiteController extends Controller
         $this->authorize('view', $site);
 
         $period = $request->get('period', '1d');
+        $granularity = $request->get('granularity', 'daily');
         $days = $this->getDaysFromPeriod($period);
         $startDate = now()->subDays($days - 1)->startOfDay();
         $endDate = now()->endOfDay();
@@ -81,136 +84,98 @@ class SiteController extends Controller
         }]);
 
         // Get comprehensive analytics data
-        $analyticsData = $this->getAnalyticsData($site, $startDate, $endDate);
+        $analyticsData = $this->getAnalyticsData($site, $startDate, $endDate, $granularity);
+
+        // Determine the actual granularity that was used (might be auto-adjusted)
+        $daysDiff = $startDate->diffInDays($endDate);
+        $actualGranularity = $daysDiff <= 2 ? 'hourly' : $granularity;
 
         return Inertia::render('Sites/Show', [
             'site' => $site,
             'analyticsData' => $analyticsData,
             'period' => $period,
+            'granularity' => $actualGranularity,
         ]);
     }
 
-    private function getAnalyticsData(Site $site, $startDate, $endDate): array
+    private function getAnalyticsData(Site $site, $startDate, $endDate, string $granularity = 'daily'): array
     {
-        $pageViews = $site->pageViews()->whereBetween('created_at', [$startDate, $endDate]);
-        $events = $site->events()->whereBetween('created_at', [$startDate, $endDate]);
+        // Auto-adjust granularity for short periods
+        $daysDiff = $startDate->diffInDays($endDate);
+        if ($daysDiff <= 2) {
+            $granularity = 'hourly';
+        }
 
-        // Chart data
-        $chartData = $this->getChartData($site, $startDate, $endDate);
+        // Determine which aggregation table to use based on granularity preference
+        switch ($granularity) {
+            case 'hourly':
+                $aggregationTable = 'analytics_hourly';
+                $dateColumn = 'hour_start';
+                $isHourly = true;
+                break;
+            case 'monthly':
+                $aggregationTable = 'analytics_monthly';
+                $dateColumn = 'year_month';
+                $isHourly = false;
+                break;
+            case 'daily':
+            default:
+                $aggregationTable = 'analytics_daily';
+                $dateColumn = 'date';
+                $isHourly = false;
+                break;
+        }
 
-        // Top pages
-        $topPages = $pageViews->clone()
-            ->selectRaw('url, COUNT(*) as count')
-            ->groupBy('url')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'url' => $item->url,
-                    'count' => $item->count,
-                ];
-            });
+        // Get aggregated data
+        $aggregatedData = DB::table($aggregationTable)
+            ->where('site_id', $site->id)
+            ->whereBetween($dateColumn, [$startDate, $endDate])
+            ->get();
 
-        // Top referrers
-        $topReferrers = $pageViews->clone()
-            ->whereNotNull('referrer')
-            ->selectRaw('referrer, COUNT(*) as count')
-            ->groupBy('referrer')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'referrer' => $item->referrer,
-                    'count' => $item->count,
-                ];
-            });
+        // Calculate overall stats from aggregated data
+        $totalPageViews = $aggregatedData->sum('page_views');
+        $totalUniqueVisitors = $aggregatedData->sum('unique_visitors');
 
-        // Device types
-        $deviceStats = $pageViews->clone()
-            ->selectRaw('device_type, COUNT(*) as count')
-            ->groupBy('device_type')
-            ->orderByDesc('count')
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'device' => $item->device_type ?? 'Unknown',
-                    'count' => $item->count,
-                ];
-            });
+        // Calculate bounce rate (this might need to be stored in aggregated data)
+        // For now, we'll use a placeholder or calculate from recent raw data
+        $bounceRate = $this->calculateBounceRateFromAggregated($site, $startDate, $endDate);
 
-        // Browsers
-        $browserStats = $pageViews->clone()
-            ->selectRaw('browser, COUNT(*) as count')
-            ->groupBy('browser')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'browser' => $item->browser ?? 'Unknown',
-                    'count' => $item->count,
-                ];
-            });
+        // Average time on page (might need to be stored in aggregated data)
+        $avgTimeOnPage = $this->calculateAvgTimeFromAggregated($site, $startDate, $endDate);
 
-        // Operating systems
-        $osStats = $pageViews->clone()
-            ->selectRaw('os, COUNT(*) as count')
-            ->groupBy('os')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'os' => $item->os ?? 'Unknown',
-                    'count' => $item->count,
-                ];
-            });
+        // Total events from aggregated data or recent raw data
+        $totalEvents = $this->getTotalEventsFromAggregated($site, $startDate, $endDate);
 
-        // Screen resolutions
-        $screenStats = $pageViews->clone()
-            ->whereNotNull('screen_resolution')
-            ->selectRaw('screen_resolution, COUNT(*) as count')
-            ->groupBy('screen_resolution')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'resolution' => $item->screen_resolution,
-                    'count' => $item->count,
-                ];
-            });
+        // Get chart data from aggregated data
+        $chartData = $this->getChartDataFromAggregated($site, $startDate, $endDate, $aggregationTable, $dateColumn, $isHourly);
 
-        // Top events
-        $topEvents = $events->clone()
-            ->selectRaw('name, COUNT(*) as count')
-            ->groupBy('name')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'name' => $item->name,
-                    'count' => $item->count,
-                ];
-            });
+        // Get top pages from aggregated data
+        $topPages = $this->getTopPagesFromAggregated($aggregatedData);
 
-        // Overall stats
-        $totalPageViews = $pageViews->count();
-        $uniqueVisitors = $pageViews->distinct('session_id')->count();
-        $bounceRate = $totalPageViews > 0 
-            ? round(($pageViews->where('is_bounce', true)->count() / $totalPageViews) * 100, 2)
-            : 0;
-        $avgTimeOnPage = $pageViews->whereNotNull('time_on_page')->avg('time_on_page') ?? 0;
-        $totalEvents = $events->count();
+        // Get top referrers from aggregated data
+        $topReferrers = $this->getTopReferrersFromAggregated($aggregatedData);
+
+        // Fallback to recent data if aggregated data is empty
+        if (empty($topPages)) {
+            $topPages = $this->getTopPagesFromRecent($site, $startDate, $endDate);
+        }
+        if (empty($topReferrers)) {
+            $topReferrers = $this->getTopReferrersFromRecent($site, $startDate, $endDate);
+        }
+
+        // For device, browser, OS, and screen stats, we might need to use recent raw data
+        // or store these in aggregated data. For now, using recent raw data
+        $deviceStats = $this->getDeviceStatsFromAggregated($aggregatedData);
+        $browserStats = $this->getBrowserStatsFromAggregated($aggregatedData);
+        $osStats = $this->getOsStatsFromAggregated($aggregatedData);
+        $screenStats = $this->getScreenStatsFromAggregated($aggregatedData);
+        $topEvents = $this->getTopEventsFromRecent($site, $startDate, $endDate);
 
         return [
             'chartData' => $chartData,
             'stats' => [
                 'totalPageViews' => $totalPageViews,
-                'uniqueVisitors' => $uniqueVisitors,
+                'uniqueVisitors' => $totalUniqueVisitors,
                 'bounceRate' => $bounceRate,
                 'avgTimeOnPage' => round($avgTimeOnPage),
                 'totalEvents' => $totalEvents,
@@ -225,119 +190,350 @@ class SiteController extends Controller
         ];
     }
 
-    private function getChartData(Site $site, $startDate, $endDate): array
+    private function calculateBounceRateFromAggregated(Site $site, $startDate, $endDate): float
     {
-        $daysDiff = $startDate->diffInDays($endDate);
-        $isHourly = $daysDiff < 3;
+        // For now, calculate from recent raw data since bounce rate isn't stored in aggregated data
+        $recentPageViews = $site->pageViews()
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->limit(10000); // Limit to prevent performance issues
 
-        // Vérifier si les tables d'agrégation ont des données
-        $hasAggregatedData = DB::table('analytics_daily')
-            ->where('site_id', $site->id)
-            ->exists();
-            
-
-
-        if ($hasAggregatedData) {
-            // Utiliser les données agrégées si disponibles
-            if ($isHourly) {
-                $hourlyFormat = DatabaseHelper::getDateFormatFunction('H:i', 'hour_start');
-                $data = DB::table('analytics_hourly')
-                    ->where('site_id', $site->id)
-                    ->whereBetween('hour_start', [$startDate, $endDate])
-                    ->selectRaw("
-                        {$hourlyFormat} as label,
-                        page_views,
-                        unique_visitors
-                    ")
-                    ->orderBy('hour_start')
-                    ->get();
-            } else {
-                $dailyFormat = DatabaseHelper::getDateFormatFunction('j M', 'date');
-                $data = DB::table('analytics_daily')
-                    ->where('site_id', $site->id)
-                    ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
-                    ->selectRaw("
-                        {$dailyFormat} as label,
-                        page_views,
-                        unique_visitors
-                    ")
-                    ->orderBy('date')
-                    ->get();
-            }
-
-            $result = [
-                'labels' => $data->pluck('label')->toArray(),
-                'pageViews' => $data->pluck('page_views')->toArray(),
-                'visitors' => $data->pluck('unique_visitors')->toArray(),
-                'isHourly' => $isHourly,
-            ];
-            
-
-            
-            return $result;
-        } else {
-            // Fallback vers les anciennes données si pas d'agrégation
-            $labels = [];
-            $pageViewsData = [];
-            $visitorsData = [];
-
-            if ($isHourly) {
-                // Hourly data for ranges less than 3 days
-                $current = $startDate->copy()->startOfHour();
-                while ($current <= $endDate) {
-                    $labels[] = $current->format('H:i');
-
-                    // Get page views for this hour
-                    $pageViews = $site->pageViews()
-                        ->whereBetween('created_at', [
-                            $current->copy()->startOfHour(),
-                            $current->copy()->endOfHour()
-                        ])
-                        ->count();
-                    $pageViewsData[] = $pageViews;
-
-                    // Get unique visitors for this hour
-                    $visitors = $site->pageViews()
-                        ->whereBetween('created_at', [
-                            $current->copy()->startOfHour(),
-                            $current->copy()->endOfHour()
-                        ])
-                        ->distinct('session_id')
-                        ->count();
-                    $visitorsData[] = $visitors;
-
-                    $current->addHour();
-                }
-            } else {
-                // Daily data for ranges 3 days or more
-                $current = $startDate->copy();
-                while ($current <= $endDate) {
-                    $labels[] = $current->format('j M');
-
-                    // Get page views for this date
-                    $pageViews = $site->pageViews()
-                        ->whereDate('created_at', $current)
-                        ->count();
-                    $pageViewsData[] = $pageViews;
-
-                    // Get unique visitors for this date
-                    $visitors = $site->pageViews()
-                        ->whereDate('created_at', $current)
-                        ->distinct('session_id')
-                        ->count();
-                    $visitorsData[] = $visitors;
-
-                    $current->addDay();
-                }
-            }
-
-            return [
-                'labels' => $labels,
-                'pageViews' => $pageViewsData,
-                'visitors' => $visitorsData,
-                'isHourly' => $isHourly,
-            ];
+        $totalPageViews = $recentPageViews->count();
+        if ($totalPageViews === 0) {
+            return 0;
         }
+
+        $bounceCount = $recentPageViews->where('is_bounce', true)->count();
+
+        return round(($bounceCount / $totalPageViews) * 100, 2);
+    }
+
+    private function calculateAvgTimeFromAggregated(Site $site, $startDate, $endDate): float
+    {
+        // For now, calculate from recent raw data since avg time isn't stored in aggregated data
+        $avgTime = $site->pageViews()
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->whereNotNull('time_on_page')
+            ->limit(10000) // Limit to prevent performance issues
+            ->avg('time_on_page');
+
+        return $avgTime ?? 0;
+    }
+
+    private function getTotalEventsFromAggregated(Site $site, $startDate, $endDate): int
+    {
+        // For now, get from recent raw data since events aren't stored in aggregated data
+        return $site->events()
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->limit(10000) // Limit to prevent performance issues
+            ->count();
+    }
+
+    private function getChartDataFromAggregated(Site $site, $startDate, $endDate, string $table, string $dateColumn, bool $isHourly): array
+    {
+        $data = DB::table($table)
+            ->where('site_id', $site->id)
+            ->whereBetween($dateColumn, [$startDate, $endDate])
+            ->orderBy($dateColumn)
+            ->get();
+
+        $labels = [];
+        $pageViews = [];
+        $visitors = [];
+
+        // Check if we're spanning multiple days
+        $daysDiff = $startDate->diffInDays($endDate);
+        $isMultiDay = $daysDiff > 1;
+
+        foreach ($data as $row) {
+            if ($isHourly) {
+                if ($isMultiDay) {
+                    // For multiple days, show "Day DayNumber Hour" format (e.g., "Mon 15 14:00")
+                    $labels[] = Carbon::parse($row->hour_start)->format('D j H:i');
+                } else {
+                    // For single day, just show time
+                    $labels[] = Carbon::parse($row->hour_start)->format('H:i');
+                }
+            } else {
+                $labels[] = Carbon::parse($row->$dateColumn)->format('M j');
+            }
+            $pageViews[] = $row->page_views;
+            $visitors[] = $row->unique_visitors;
+        }
+
+        return [
+            'labels' => $labels,
+            'pageViews' => $pageViews,
+            'visitors' => $visitors,
+            'isHourly' => $isHourly,
+        ];
+    }
+
+    private function getTopPagesFromAggregated($aggregatedData): array
+    {
+        $allPages = [];
+
+        foreach ($aggregatedData as $row) {
+            $topPages = json_decode($row->top_pages ?? '[]', true);
+
+            if (! is_array($topPages)) {
+                continue;
+            }
+
+            // Debug: Log the structure of top_pages
+            if (! empty($topPages)) {
+                \Log::info('Top pages structure:', ['first_item' => $topPages[0] ?? 'empty']);
+            }
+
+            foreach ($topPages as $page) {
+                if (! is_array($page) || ! isset($page['url']) || ! isset($page['count'])) {
+                    \Log::warning('Invalid page structure:', ['page' => $page]);
+
+                    continue;
+                }
+
+                $url = $page['url'];
+                $count = (int) $page['count'];
+
+                if (! isset($allPages[$url])) {
+                    $allPages[$url] = 0;
+                }
+                $allPages[$url] += $count;
+            }
+        }
+
+        arsort($allPages);
+        $topPages = array_slice($allPages, 0, 10, true);
+
+        return array_map(function ($url, $count) {
+            return [
+                'url' => $url,
+                'count' => $count,
+            ];
+        }, array_keys($topPages), $topPages);
+    }
+
+    private function getTopReferrersFromAggregated($aggregatedData): array
+    {
+        $allReferrers = [];
+
+        foreach ($aggregatedData as $row) {
+            $referrers = json_decode($row->referrers ?? '[]', true);
+
+            if (! is_array($referrers)) {
+                continue;
+            }
+
+            foreach ($referrers as $referrer) {
+                if (! is_array($referrer) || ! isset($referrer['referrer']) || ! isset($referrer['count'])) {
+                    continue;
+                }
+
+                $ref = $referrer['referrer'];
+                $count = (int) $referrer['count'];
+
+                if (! isset($allReferrers[$ref])) {
+                    $allReferrers[$ref] = 0;
+                }
+                $allReferrers[$ref] += $count;
+            }
+        }
+
+        arsort($allReferrers);
+        $topReferrers = array_slice($allReferrers, 0, 10, true);
+
+        $referrerData = array_map(function ($referrer, $count) {
+            return [
+                'referrer' => $referrer,
+                'count' => $count,
+            ];
+        }, array_keys($topReferrers), $topReferrers);
+
+        // Get favicons for referrers
+        $faviconService = new FaviconService;
+        $favicons = $faviconService->getFaviconForReferrers($referrerData);
+
+        // Add favicon URLs to referrer data
+        foreach ($referrerData as &$referrer) {
+            if ($referrer['referrer'] === null) {
+                $referrer['favicon'] = null; // Direct access
+            } else {
+                $hostname = $faviconService->extractHostname($referrer['referrer']);
+                $referrer['favicon'] = $favicons[$hostname] ?? null;
+            }
+        }
+
+        return $referrerData;
+    }
+
+    private function getTopPagesFromRecent(Site $site, $startDate, $endDate): array
+    {
+        return $site->pageViews()
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->selectRaw('url, COUNT(*) as count')
+            ->groupBy('url')
+            ->orderByDesc('count')
+            ->limit(10)
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'url' => $item->url,
+                    'count' => $item->count,
+                ];
+            })
+            ->toArray();
+    }
+
+    private function getTopReferrersFromRecent(Site $site, $startDate, $endDate): array
+    {
+        $referrers = DatabaseHelper::getTopReferrersWithDirectAccess(
+            $site->pageViews()->whereBetween('created_at', [$startDate, $endDate]),
+            10
+        );
+
+        // Add favicons for referrers
+        $faviconService = new FaviconService;
+        $favicons = $faviconService->getFaviconForReferrers($referrers);
+
+        // Add favicon URLs to referrer data
+        foreach ($referrers as &$referrer) {
+            if ($referrer['referrer'] === null) {
+                $referrer['favicon'] = null; // Direct access
+            } else {
+                $hostname = $faviconService->extractHostname($referrer['referrer']);
+                $referrer['favicon'] = $favicons[$hostname] ?? null;
+            }
+        }
+
+        return $referrers;
+    }
+
+    private function getDeviceStatsFromAggregated($aggregatedData): array
+    {
+        $deviceCounts = [];
+        foreach ($aggregatedData as $row) {
+            $deviceData = json_decode($row->devices ?? '[]', true);
+            if (is_array($deviceData)) {
+                foreach ($deviceData as $device => $count) {
+                    if (! isset($deviceCounts[$device])) {
+                        $deviceCounts[$device] = 0;
+                    }
+                    $deviceCounts[$device] += $count;
+                }
+            }
+        }
+
+        arsort($deviceCounts);
+        $topDevices = array_slice($deviceCounts, 0, 10, true);
+
+        return array_map(function ($device, $count) {
+            return [
+                'device' => $device ?? 'Unknown',
+                'count' => $count,
+            ];
+        }, array_keys($topDevices), $topDevices);
+    }
+
+    private function getBrowserStatsFromAggregated($aggregatedData): array
+    {
+        $browserCounts = [];
+        foreach ($aggregatedData as $row) {
+            $browserData = json_decode($row->browsers ?? '[]', true);
+            if (is_array($browserData)) {
+                foreach ($browserData as $browser => $count) {
+                    if (! isset($browserCounts[$browser])) {
+                        $browserCounts[$browser] = 0;
+                    }
+                    $browserCounts[$browser] += $count;
+                }
+            }
+        }
+
+        arsort($browserCounts);
+        $topBrowsers = array_slice($browserCounts, 0, 10, true);
+
+        return array_map(function ($browser, $count) {
+            return [
+                'browser' => $browser ?? 'Unknown',
+                'count' => $count,
+            ];
+        }, array_keys($topBrowsers), $topBrowsers);
+    }
+
+    private function getOsStatsFromAggregated($aggregatedData): array
+    {
+        $osCounts = [];
+        foreach ($aggregatedData as $row) {
+            $osData = json_decode($row->os ?? '[]', true);
+            if (is_array($osData)) {
+                foreach ($osData as $os => $count) {
+                    if (! isset($osCounts[$os])) {
+                        $osCounts[$os] = 0;
+                    }
+                    $osCounts[$os] += $count;
+                }
+            }
+        }
+
+        arsort($osCounts);
+        $topOs = array_slice($osCounts, 0, 10, true);
+
+        return array_map(function ($os, $count) {
+            return [
+                'os' => $os ?? 'Unknown',
+                'count' => $count,
+            ];
+        }, array_keys($topOs), $topOs);
+    }
+
+    private function getScreenStatsFromAggregated($aggregatedData): array
+    {
+        $screenCounts = [];
+        foreach ($aggregatedData as $row) {
+            $screenData = json_decode($row->screen_sizes ?? '[]', true);
+            if (is_array($screenData)) {
+                foreach ($screenData as $resolution => $count) {
+                    if (! isset($screenCounts[$resolution])) {
+                        $screenCounts[$resolution] = 0;
+                    }
+                    $screenCounts[$resolution] += $count;
+                }
+            }
+        }
+
+        arsort($screenCounts);
+        $topScreens = array_slice($screenCounts, 0, 10, true);
+
+        return array_map(function ($resolution, $count) {
+            return [
+                'resolution' => $resolution ?? 'Unknown',
+                'count' => $count,
+            ];
+        }, array_keys($topScreens), $topScreens);
+    }
+
+    private function getTopEventsFromAggregated($aggregatedData): array
+    {
+        // Events might not be stored in aggregated data yet, so fallback to recent data
+        // For now, return empty array and we'll handle events separately
+        return [];
+    }
+
+    private function getTopEventsFromRecent(Site $site, $startDate, $endDate): array
+    {
+        return $site->events()
+            ->whereBetween('created_at', [$startDate, $endDate])
+            ->selectRaw('name, COUNT(*) as count')
+            ->groupBy('name')
+            ->orderByDesc('count')
+            ->limit(10)
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'name' => $item->name,
+                    'count' => $item->count,
+                ];
+            })
+            ->toArray();
     }
 
     private function getDaysFromPeriod(string $period): int
@@ -368,7 +564,7 @@ class SiteController extends Controller
 
         $request->validate([
             'name' => 'required|string|max:255',
-            'domain' => 'required|string|max:255|unique:sites,domain,' . $site->id,
+            'domain' => 'required|string|max:255|unique:sites,domain,'.$site->id,
             'description' => 'nullable|string',
             'is_active' => 'boolean',
         ]);
@@ -393,4 +589,4 @@ class SiteController extends Controller
         return redirect()->route('sites.index')
             ->with('success', 'Site deleted successfully!');
     }
-} 
+}

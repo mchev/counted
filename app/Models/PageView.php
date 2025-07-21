@@ -46,4 +46,4 @@ class PageView extends Model
     {
         return $query->where('site_id', $siteId);
     }
-} 
+}

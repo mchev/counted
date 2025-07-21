@@ -47,4 +47,4 @@ class TrackingRequest extends FormRequest
             'time_on_page.integer' => 'Time on page must be an integer.',
         ];
     }
-} 
+}

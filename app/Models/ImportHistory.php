@@ -36,4 +36,4 @@ class ImportHistory extends Model
     {
         return $this->belongsTo(Site::class);
     }
-} 
+}

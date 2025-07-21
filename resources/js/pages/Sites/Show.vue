@@ -71,249 +71,36 @@
 
 
     <div class="flex h-full flex-1 flex-col gap-4 rounded-xl p-4 overflow-x-auto">
-      <!-- Enhanced Stats Overview -->
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <Card>
-          <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle class="text-sm font-medium">Page Views</CardTitle>
-            <Icon name="eye" class="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div class="text-2xl font-bold">{{ analyticsData.stats.totalPageViews.toLocaleString() }}</div>
-          </CardContent>
-        </Card>
+      <AnalyticsStats :stats="analyticsData.stats" />
 
-        <Card>
-          <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle class="text-sm font-medium">Unique Visitors</CardTitle>
-            <Icon name="users" class="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div class="text-2xl font-bold">{{ analyticsData.stats.uniqueVisitors.toLocaleString() }}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle class="text-sm font-medium">Bounce Rate</CardTitle>
-            <Icon name="arrow-up-right" class="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div class="text-2xl font-bold">{{ analyticsData.stats.bounceRate }}%</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle class="text-sm font-medium">Avg. Time</CardTitle>
-            <Icon name="clock" class="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div class="text-2xl font-bold">{{ formatTime(analyticsData.stats.avgTimeOnPage) }}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle class="text-sm font-medium">Events</CardTitle>
-            <Icon name="activity" class="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div class="text-2xl font-bold">{{ analyticsData.stats.totalEvents.toLocaleString() }}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <!-- Combined Analytics Chart -->
-      <Card>
-        <CardHeader>
-          <CardTitle>Traffic Overview</CardTitle>
-          <CardDescription>
-            Page views and unique visitors {{ analyticsData.chartData.isHourly ? 'by hour' : 'over time' }}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div class="h-80">
-            <AnalyticsChart
-              :data="combinedChartData"
-              type="line"
-              :height="320"
-            />
-          </div>
-        </CardContent>
-      </Card>
+      <AnalyticsChart 
+        :chart-data="analyticsData.chartData"
+        :selected-granularity="selectedGranularity"
+        :is-granularity-locked="isGranularityLocked"
+        @set-granularity="setGranularity"
+      />
 
       <!-- Top Content & Referrers -->
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <!-- Top Pages -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Top Pages</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.topPages.length === 0" class="text-center py-8 text-muted-foreground">
-              No page views yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(page, index) in analyticsData.topPages"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium truncate">{{ page.url }}</p>
-                </div>
-                <div class="text-sm text-muted-foreground">{{ page.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <TopPages :pages="analyticsData.topPages" />
 
-        <!-- Top Referrers -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Top Referrers</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.topReferrers.length === 0" class="text-center py-8 text-muted-foreground">
-              No referrer data yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(referrer, index) in analyticsData.topReferrers"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium truncate">{{ referrer.referrer }}</p>
-                </div>
-                <div class="text-sm text-muted-foreground">{{ referrer.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <TopReferrers :referrers="analyticsData.topReferrers" />
       </div>
 
       <!-- Device & Browser Stats -->
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <!-- Device Types -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Device Types</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.deviceStats.length === 0" class="text-center py-8 text-muted-foreground">
-              No device data yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(device, index) in analyticsData.deviceStats"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <div class="flex items-center space-x-2">
-                  <Icon
-                    :name="getDeviceIcon(device.device)"
-                    class="h-4 w-4 text-muted-foreground"
-                  />
-                  <span class="text-sm font-medium capitalize">{{ device.device }}</span>
-                </div>
-                <div class="text-sm text-muted-foreground">{{ device.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <DeviceStats :devices="analyticsData.deviceStats" />
 
-        <!-- Browsers -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Top Browsers</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.browserStats.length === 0" class="text-center py-8 text-muted-foreground">
-              No browser data yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(browser, index) in analyticsData.browserStats"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <span class="text-sm font-medium">{{ browser.browser }}</span>
-                <div class="text-sm text-muted-foreground">{{ browser.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <BrowserStats :browsers="analyticsData.browserStats" />
 
-        <!-- Operating Systems -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Operating Systems</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.osStats.length === 0" class="text-center py-8 text-muted-foreground">
-              No OS data yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(os, index) in analyticsData.osStats"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <span class="text-sm font-medium">{{ os.os }}</span>
-                <div class="text-sm text-muted-foreground">{{ os.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <OsStats :operating-systems="analyticsData.osStats" />
       </div>
 
       <!-- Screen Resolutions & Top Events -->
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <!-- Screen Resolutions -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Screen Resolutions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.screenStats.length === 0" class="text-center py-8 text-muted-foreground">
-              No screen data yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(screen, index) in analyticsData.screenStats"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <span class="text-sm font-medium">{{ screen.resolution }}</span>
-                <div class="text-sm text-muted-foreground">{{ screen.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <ScreenStats :screens="analyticsData.screenStats" />
 
-        <!-- Top Events -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Top Events</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="analyticsData.topEvents.length === 0" class="text-center py-8 text-muted-foreground">
-              No events tracked yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="(event, index) in analyticsData.topEvents"
-                :key="index"
-                class="flex items-center justify-between"
-              >
-                <span class="text-sm font-medium">{{ event.name }}</span>
-                <div class="text-sm text-muted-foreground">{{ event.count.toLocaleString() }}</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <TopEventStats :events="analyticsData.topEvents" />
       </div>
 
       <!-- Recent Activity -->
@@ -347,34 +134,7 @@
           </CardContent>
         </Card>
 
-        <!-- Recent Events -->
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Events</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div v-if="site.events.length === 0" class="text-center py-8 text-muted-foreground">
-              No events tracked yet
-            </div>
-            <div v-else class="space-y-3">
-              <div
-                v-for="event in site.events"
-                :key="event.id"
-                class="flex items-center justify-between"
-              >
-                <div class="flex-1 min-w-0">
-                  <p class="text-sm font-medium">{{ event.name }}</p>
-                  <p class="text-xs text-muted-foreground">
-                    {{ new Date(event.created_at).toLocaleString() }}
-                  </p>
-                </div>
-                <div class="text-xs text-muted-foreground">
-                  {{ getHostname(event.url) }}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <TopEvents :events="site.events" />
       </div>
     </div>
   </AppLayout>
@@ -389,7 +149,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import Heading from '@/components/Heading.vue'
 import Icon from '@/components/Icon.vue'
-import AnalyticsChart from '@/components/AnalyticsChart.vue'
+import { TopPages, TopReferrers, DeviceStats, BrowserStats, OsStats, ScreenStats, TopEvents, TopEventStats, AnalyticsStats, AnalyticsChart } from '@/components/analytics'
 
 interface PageView {
   id: number
@@ -433,7 +193,7 @@ interface AnalyticsData {
     totalEvents: number
   }
   topPages: Array<{ url: string; count: number }>
-  topReferrers: Array<{ referrer: string; count: number }>
+  topReferrers: Array<{ referrer: string | null; count: number; favicon: string | null; faviconError?: boolean }>
   deviceStats: Array<{ device: string; count: number }>
   browserStats: Array<{ browser: string; count: number }>
   osStats: Array<{ os: string; count: number }>
@@ -445,6 +205,7 @@ interface Props {
   site: Site
   analyticsData: AnalyticsData
   period?: string
+  granularity?: string
 }
 
 const props = defineProps<Props>()
@@ -453,10 +214,14 @@ const props = defineProps<Props>()
 const selectedPeriod = ref(props.period || '7d')
 const dateFrom = ref(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0])
 const dateTo = ref(new Date().toISOString().split('T')[0])
+const selectedGranularity = ref(props.granularity || 'daily') // Initialize with prop or default to daily
 
 // Methods
 const updatePeriod = () => {
-  router.get(route('sites.show', { site: props.site.id }), { period: selectedPeriod.value }, {
+  router.get(route('sites.show', { site: props.site.id }), { 
+    period: selectedPeriod.value,
+    granularity: selectedGranularity.value 
+  }, {
     preserveState: true,
     preserveScroll: true,
   })
@@ -486,11 +251,16 @@ const applyCustomDateRange = () => {
   }
 }
 
-const formatTime = (seconds: number): string => {
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds}s`
+const setGranularity = (granularity: 'hourly' | 'daily' | 'monthly') => {
+  selectedGranularity.value = granularity
+  // Reload data with new granularity
+  router.get(route('sites.show', { site: props.site.id }), { 
+    period: selectedPeriod.value,
+    granularity: granularity 
+  }, {
+    preserveState: true,
+    preserveScroll: true,
+  })
 }
 
 const getDeviceIcon = (device: string): string => {
@@ -512,45 +282,12 @@ const formatDateRange = computed(() => {
   return 'Custom Range'
 })
 
-const combinedChartData = computed(() => ({
-  labels: props.analyticsData.chartData.labels,
-  datasets: [
-    {
-      label: 'Page Views',
-      data: props.analyticsData.chartData.pageViews,
-      borderColor: '#6366f1',
-      backgroundColor: 'rgba(99, 102, 241, 0.1)',
-      borderWidth: 2,
-      fill: true,
-      tension: 0.4,
-      pointRadius: 0,
-      pointHoverRadius: 6,
-      pointHoverBackgroundColor: '#6366f1',
-      pointHoverBorderColor: '#ffffff',
-      pointHoverBorderWidth: 2,
-    },
-    {
-      label: 'Unique Visitors',
-      data: props.analyticsData.chartData.visitors,
-      borderColor: '#10b981',
-      backgroundColor: 'rgba(16, 185, 129, 0.1)',
-      borderWidth: 2,
-      fill: true,
-      tension: 0.4,
-      pointRadius: 0,
-      pointHoverRadius: 6,
-      pointHoverBackgroundColor: '#10b981',
-      pointHoverBorderColor: '#ffffff',
-      pointHoverBorderWidth: 2,
-    }
-  ]
-}))
 
-const getHostname = (url: string): string => {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return 'N/A'
-  }
-}
+
+
+
+// Check if granularity should be locked to hourly
+const isGranularityLocked = computed(() => {
+  return selectedGranularity.value === 'hourly' && (selectedPeriod.value === '1d' || selectedPeriod.value === '2d')
+})
 </script> 

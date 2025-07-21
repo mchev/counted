@@ -46,4 +46,4 @@ class EventTrackingRequest extends FormRequest
             'url.url' => 'URL must be a valid URL.',
         ];
     }
-} 
+}

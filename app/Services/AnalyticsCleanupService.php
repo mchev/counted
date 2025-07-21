@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\PageView;
 use App\Models\Event;
+use App\Models\PageView;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -23,21 +23,21 @@ class AnalyticsCleanupService
 
         // Date limite : début de la semaine courante
         $currentWeekStart = Carbon::now()->startOfWeek();
-        
+
         Log::info('AnalyticsCleanupService: Starting cleanup', [
             'current_week_start' => $currentWeekStart->toDateTimeString(),
         ]);
 
         // Récupérer tous les sites
         $sites = \App\Models\Site::all();
-        
+
         foreach ($sites as $site) {
             $this->cleanupSiteData($site, $currentWeekStart, $stats);
             $stats['sites_processed']++;
         }
 
         Log::info('AnalyticsCleanupService: Cleanup completed', $stats);
-        
+
         return $stats;
     }
 
@@ -50,14 +50,14 @@ class AnalyticsCleanupService
         $deletedPageViews = PageView::where('site_id', $site->id)
             ->where('created_at', '<', $currentWeekStart)
             ->delete();
-        
+
         $stats['page_views_deleted'] += $deletedPageViews;
 
         // Supprimer les events anciens
         $deletedEvents = Event::where('site_id', $site->id)
             ->where('created_at', '<', $currentWeekStart)
             ->delete();
-        
+
         $stats['events_deleted'] += $deletedEvents;
 
         Log::info('AnalyticsCleanupService: Site cleanup completed', [
@@ -83,4 +83,4 @@ class AnalyticsCleanupService
 
         return $stats;
     }
-} 
+}

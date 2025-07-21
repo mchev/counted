@@ -13,8 +13,6 @@ interface Site {
   name: string
   domain: string
   is_active: boolean
-  page_views_count: number
-  events_count: number
 }
 
 interface Props {
@@ -31,14 +29,6 @@ const breadcrumbs: BreadcrumbItem[] = [
         href: '/dashboard',
     },
 ]
-
-const totalPageViews = computed(() => 
-  props.sites.reduce((sum, site) => sum + site.page_views_count, 0)
-)
-
-const totalEvents = computed(() => 
-  props.sites.reduce((sum, site) => sum + site.events_count, 0)
-)
 
 const activeSites = computed(() => 
   props.sites.filter(site => site.is_active).length
@@ -61,7 +51,7 @@ const activeSites = computed(() =>
 
         <div class="flex h-full flex-1 flex-col gap-4 rounded-xl p-4 overflow-x-auto">
             <!-- Stats Overview -->
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2">
                 <Card>
                     <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle class="text-sm font-medium">Total Sites</CardTitle>
@@ -69,26 +59,6 @@ const activeSites = computed(() =>
                     </CardHeader>
                     <CardContent>
                         <div class="text-2xl font-bold">{{ sites.length }}</div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle class="text-sm font-medium">Total Page Views</CardTitle>
-                        <Icon name="eye" class="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div class="text-2xl font-bold">{{ totalPageViews }}</div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle class="text-sm font-medium">Total Events</CardTitle>
-                        <Icon name="activity" class="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div class="text-2xl font-bold">{{ totalEvents }}</div>
                     </CardContent>
                 </Card>
 
@@ -139,11 +109,16 @@ const activeSites = computed(() =>
                                     </div>
                                 </div>
                                 <div>
-                                    <h3 class="text-sm font-medium">{{ site.name }}</h3>
+                                    <h3 class="text-sm font-medium">
+                                        <a 
+                                            :href="route('sites.show', { site: site.id })"
+                                            class="hover:text-primary transition-colors"
+                                        >
+                                            {{ site.name }}
+                                        </a>
+                                    </h3>
                                     <p class="text-sm text-muted-foreground">{{ site.domain }}</p>
                                     <div class="flex items-center space-x-4 mt-1 text-xs text-muted-foreground">
-                                        <span>{{ site.page_views_count }} page views</span>
-                                        <span>{{ site.events_count }} events</span>
                                         <span
                                             :class="site.is_active ? 'text-green-600' : 'text-red-600'"
                                         >

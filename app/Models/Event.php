@@ -43,4 +43,4 @@ class Event extends Model
     {
         return $query->where('name', $name);
     }
-} 
+}

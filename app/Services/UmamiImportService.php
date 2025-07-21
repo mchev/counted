@@ -3,24 +3,43 @@
 namespace App\Services;
 
 use App\Models\Site;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class UmamiImportService
 {
     private const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+
     private const BATCH_SIZE = 1000; // Nombre d'insertions par batch
+
     private int $userId;
+
     private UserAgentParserService $userAgentParser;
+
+    private array $hourlyAggregations = [];
+
+    private array $dailyAggregations = [];
+
+    private array $monthlyAggregations = [];
 
     public function __construct(int $userId)
     {
         $this->userId = $userId;
-        $this->userAgentParser = new UserAgentParserService();
+        $this->userAgentParser = new UserAgentParserService;
     }
 
     public function analyzeDump(string $filePath): array
     {
+        // Check if file exists before analyzing
+        if (! file_exists($filePath)) {
+            throw new \Exception("File not found: {$filePath}");
+        }
+
+        if (! is_readable($filePath)) {
+            throw new \Exception("File not readable: {$filePath}");
+        }
+
         $stats = [
             'page_views' => 0,
             'events' => 0,
@@ -33,14 +52,14 @@ class UmamiImportService
         ];
 
         $handle = $this->openFile($filePath);
-        if (!$handle) {
-            throw new \Exception('Cannot open file for analysis');
+        if (! $handle) {
+            throw new \Exception('Cannot open file for analysis: '.$filePath);
         }
 
         $lineCount = 0;
         while (($line = $this->readLine($handle)) !== false) {
             $lineCount++;
-            
+
             if (str_contains(strtolower($line), 'insert into `website`')) {
                 $stats['websites']++;
                 $websiteData = $this->extractWebsiteData($line);
@@ -64,14 +83,13 @@ class UmamiImportService
 
         $this->closeFile($handle);
         $stats['estimated_duration'] = $this->estimateProcessingTime($stats);
-        
+
         return $stats;
     }
 
-    public function importData(string $filePath, callable $progressCallback = null): array
+    public function importData(string $filePath, ?callable $progressCallback = null): array
     {
-        // Debug: vérifier le fichier
-        Log::info('UmamiImportService: Starting import', [
+        Log::info('UmamiImportService: Starting aggregated import', [
             'filePath' => $filePath,
             'file_exists' => file_exists($filePath),
             'is_file' => is_file($filePath),
@@ -86,18 +104,24 @@ class UmamiImportService
             'websites_updated' => 0,
             'batches_processed' => 0,
             'errors' => 0,
+            'hourly_aggregations' => 0,
+            'daily_aggregations' => 0,
+            'monthly_aggregations' => 0,
         ];
 
         $handle = $this->openFile($filePath);
-        if (!$handle) {
-            throw new \Exception('Cannot open file for import: ' . $filePath);
+        if (! $handle) {
+            throw new \Exception('Cannot open file for import: '.$filePath);
         }
 
         // Première passe : extraire et créer/mettre à jour les sites
         $sitesMap = $this->processWebsites($filePath, $importedStats);
-        
-        // Deuxième passe : importer les données
-        $this->processData($filePath, $sitesMap, $importedStats, $progressCallback);
+
+        // Deuxième passe : importer et agréger les données
+        $this->processDataWithAggregation($filePath, $sitesMap, $importedStats, $progressCallback);
+
+        // Insérer les agrégations finales
+        $this->insertFinalAggregations($importedStats);
 
         $this->closeFile($handle);
 
@@ -111,15 +135,21 @@ class UmamiImportService
             'events' => 0,
             'errors' => 0,
             'batches_processed' => 0,
+            'hourly_aggregations' => 0,
+            'daily_aggregations' => 0,
+            'monthly_aggregations' => 0,
         ];
 
         // Parser les sessions pour ce chunk
         $sessionsMap = $this->processSessions($filePath, $startLine, $endLine, $sitesMap);
 
-        // Traiter seulement les lignes du chunk spécifié
-        $this->processDataChunk($filePath, $startLine, $endLine, $sitesMap, $sessionsMap, $stats);
+        // Traiter seulement les lignes du chunk spécifié avec agrégation
+        $this->processDataChunkWithAggregation($filePath, $startLine, $endLine, $sitesMap, $sessionsMap, $stats);
 
-        Log::info('UmamiImportService: Chunk processing complete', [
+        // Insérer les agrégations pour ce chunk
+        $this->insertChunkAggregations($stats);
+
+        Log::info('UmamiImportService: Chunk processing complete with aggregation', [
             'start_line' => $startLine,
             'end_line' => $endLine,
             'sessions_count' => count($sessionsMap),
@@ -131,12 +161,12 @@ class UmamiImportService
 
     public function importFromJson(string $jsonPath): void
     {
-        if (!file_exists($jsonPath)) {
+        if (! file_exists($jsonPath)) {
             throw new \Exception("JSON file not found: {$jsonPath}");
         }
 
         $websites = json_decode(file_get_contents($jsonPath), true);
-        if (!$websites) {
+        if (! $websites) {
             throw new \Exception("Invalid JSON file: {$jsonPath}");
         }
 
@@ -145,7 +175,7 @@ class UmamiImportService
 
         foreach ($websites as $website) {
             $existingSite = Site::where('name', $website['name'])->first();
-            
+
             if ($existingSite) {
                 // Mettre à jour le site existant
                 $existingSite->update([
@@ -178,34 +208,38 @@ class UmamiImportService
         $websiteLines = 0;
         $currentWebsiteData = '';
         $inWebsiteInsert = false;
-        
+
         // Initialiser les statistiques si elles n'existent pas
-        if (!isset($stats['sites_created'])) $stats['sites_created'] = 0;
-        if (!isset($stats['sites_updated'])) $stats['sites_updated'] = 0;
-        
+        if (! isset($stats['sites_created'])) {
+            $stats['sites_created'] = 0;
+        }
+        if (! isset($stats['sites_updated'])) {
+            $stats['sites_updated'] = 0;
+        }
+
         Log::info('UmamiImportService: Processing websites');
-        
+
         while (($line = $this->readLine($handle)) !== false) {
             $lineCount++;
-            
+
             if (str_contains(strtolower($line), 'insert into `website`')) {
                 $websiteLines++;
                 $inWebsiteInsert = true;
                 $currentWebsiteData = $line;
                 Log::info('Found website line start', ['line_number' => $lineCount]);
             } elseif ($inWebsiteInsert) {
-                $currentWebsiteData .= ' ' . trim($line);
-                
+                $currentWebsiteData .= ' '.trim($line);
+
                 // Vérifier si c'est la fin de l'INSERT (contient des parenthèses fermantes)
                 if (str_contains($line, ');')) {
                     $websitesData = $this->extractWebsiteData($currentWebsiteData);
-                    if (!empty($websitesData)) {
+                    if (! empty($websitesData)) {
                         Log::info('Extracted websites data', ['websites_count' => count($websitesData)]);
-                        
+
                         foreach ($websitesData as $websiteData) {
                             $site = $this->findOrCreateSite($websiteData);
                             $sitesMap[$websiteData['id']] = $site;
-                            
+
                             if ($site->wasRecentlyCreated) {
                                 $stats['sites_created']++;
                                 Log::info('Created new site', ['site_id' => $site->id, 'name' => $site->name]);
@@ -217,13 +251,13 @@ class UmamiImportService
                     } else {
                         Log::warning('Failed to extract website data', ['data' => substr($currentWebsiteData, 0, 200)]);
                     }
-                    
+
                     $inWebsiteInsert = false;
                     $currentWebsiteData = '';
                 }
             }
         }
-        
+
         Log::info('UmamiImportService: Website processing complete', [
             'total_lines' => $lineCount,
             'website_lines' => $websiteLines,
@@ -231,75 +265,49 @@ class UmamiImportService
             'sites_created' => $stats['sites_created'],
             'sites_updated' => $stats['sites_updated'],
         ]);
-        
+
         $this->closeFile($handle);
+
         return $sitesMap;
     }
 
-    private function processData(string $filePath, array $sitesMap, array &$stats, callable $progressCallback = null): void
+    private function processDataWithAggregation(string $filePath, array $sitesMap, array &$stats, ?callable $progressCallback = null): void
     {
         $handle = $this->openFile($filePath);
-        $pageViewBatch = [];
-        $eventBatch = [];
         $lineCount = 0;
-        $pageviewLines = 0;
         $eventLines = 0;
         $currentEventData = '';
         $inEventInsert = false;
 
-        Log::info('UmamiImportService: Processing data', [
+        Log::info('UmamiImportService: Processing data with aggregation', [
             'sites_count' => count($sitesMap),
         ]);
 
         while (($line = $this->readLine($handle)) !== false) {
             $lineCount++;
-            
+
             // Traiter les website_events (contient pageviews et events)
             if (str_contains(strtolower($line), 'insert into `website_event`')) {
                 $eventLines++;
                 $inEventInsert = true;
                 $currentEventData = $line;
-                Log::debug('Found website_event line start', ['line_number' => $lineCount]);
-            } elseif ($inEventInsert) {
-                $currentEventData .= ' ' . trim($line);
-                
-                // Vérifier si c'est la fin de l'INSERT (contient des parenthèses fermantes)
-                if (str_contains($line, ');')) {
-                    $eventsData = $this->extractWebsiteEventData($currentEventData, $sitesMap);
-                    if (!empty($eventsData)) {
-                        Log::info('Extracted website_event data', ['events_count' => count($eventsData)]);
-                        
-                        foreach ($eventsData as $data) {
-                            // Séparer les pageviews des events
-                            if ($data['event_type'] === '1' || $data['event_type'] === 1) {
-                                // event_type = 1 signifie pageview dans Umami
-                                $pageViewBatch[] = $this->convertToPageView($data);
-                                $pageviewLines++;
-                            } elseif ($data['event_type'] === '2' || $data['event_type'] === 2) {
-                                // event_type = 2 signifie event dans Umami
-                                $eventBatch[] = $this->convertToEvent($data);
-                            }
-                        }
-                    } else {
-                        Log::warning('Failed to extract website_event data', ['data' => substr($currentEventData, 0, 200)]);
+
+                // Continuer à lire jusqu'à la fin de l'INSERT
+                while (($line = $this->readLine($handle)) !== false) {
+                    $lineCount++;
+                    $currentEventData .= ' '.trim($line);
+
+                    if (str_contains($line, ');')) {
+                        break;
                     }
-                    
-                    $inEventInsert = false;
-                    $currentEventData = '';
                 }
-            }
 
-            // Insérer par batch
-            if (count($pageViewBatch) >= self::BATCH_SIZE) {
-                $this->insertBatch('page_views', $pageViewBatch, $stats);
-                $pageViewBatch = [];
-                $stats['batches_processed']++;
-            }
+                // Traiter les données d'événements avec agrégation
+                $events = $this->extractWebsiteEventData($currentEventData, $sitesMap);
+                $this->processEventsWithAggregation($events, $stats);
 
-            if (count($eventBatch) >= self::BATCH_SIZE) {
-                $this->insertBatch('events', $eventBatch, $stats);
-                $eventBatch = [];
-                $stats['batches_processed']++;
+                $inEventInsert = false;
+                $currentEventData = '';
             }
 
             // Callback de progression
@@ -313,19 +321,8 @@ class UmamiImportService
             }
         }
 
-        // Insérer les derniers batches
-        if (!empty($pageViewBatch)) {
-            $this->insertBatch('page_views', $pageViewBatch, $stats);
-            $stats['batches_processed']++;
-        }
-        if (!empty($eventBatch)) {
-            $this->insertBatch('events', $eventBatch, $stats);
-            $stats['batches_processed']++;
-        }
-
-        Log::info('UmamiImportService: Data processing complete', [
+        Log::info('UmamiImportService: Data processing with aggregation complete', [
             'total_lines' => $lineCount,
-            'pageview_lines' => $pageviewLines,
             'event_lines' => $eventLines,
             'page_views_imported' => $stats['page_views'],
             'events_imported' => $stats['events'],
@@ -335,58 +332,15 @@ class UmamiImportService
         $this->closeFile($handle);
     }
 
-    private function processSessions(string $filePath, int $startLine, int $endLine, array $sitesMap): array
-    {
-        $sessionsMap = []; // session_id => session_data
-        $handle = $this->openFile($filePath);
-        $lineCount = 0;
-        
-        Log::info('UmamiImportService: Processing sessions for chunk', [
-            'start_line' => $startLine,
-            'end_line' => $endLine,
-        ]);
-        
-        while (($line = $this->readLine($handle)) !== false) {
-            $lineCount++;
-            
-            // Ignorer les lignes hors du chunk
-            if ($lineCount < $startLine || $lineCount > $endLine) {
-                continue;
-            }
-            
-            if (str_contains(strtolower($line), 'insert into `session`')) {
-                $sessionsData = $this->extractSessionData($line);
-                if (!empty($sessionsData)) {
-                    Log::info('Extracted sessions data', ['sessions_count' => count($sessionsData)]);
-                    
-                    foreach ($sessionsData as $sessionData) {
-                        $sessionsMap[$sessionData['session_id']] = $sessionData;
-                    }
-                }
-            }
-        }
-        
-        $this->closeFile($handle);
-        
-        Log::info('UmamiImportService: Sessions processing complete', [
-            'sessions_found' => count($sessionsMap),
-        ]);
-        
-        return $sessionsMap;
-    }
-
-    private function processDataChunk(string $filePath, int $startLine, int $endLine, array $sitesMap, array $sessionsMap, array &$stats): void
+    private function processDataChunkWithAggregation(string $filePath, int $startLine, int $endLine, array $sitesMap, array $sessionsMap, array &$stats): void
     {
         $handle = $this->openFile($filePath);
-        $pageViewBatch = [];
-        $eventBatch = [];
         $lineCount = 0;
-        $pageviewLines = 0;
         $eventLines = 0;
         $currentEventData = '';
         $inEventInsert = false;
 
-        Log::info('UmamiImportService: Processing data chunk', [
+        Log::info('UmamiImportService: Processing data chunk with aggregation', [
             'start_line' => $startLine,
             'end_line' => $endLine,
             'sites_count' => count($sitesMap),
@@ -394,79 +348,44 @@ class UmamiImportService
 
         while (($line = $this->readLine($handle)) !== false) {
             $lineCount++;
-            
+
             // Ignorer les lignes en dehors de notre chunk
             if ($lineCount < $startLine) {
                 continue;
             }
-            
+
             if ($lineCount > $endLine) {
                 break;
             }
-            
+
             // Traiter les website_events (contient pageviews et events)
             if (str_contains(strtolower($line), 'insert into `website_event`')) {
                 $eventLines++;
                 $inEventInsert = true;
                 $currentEventData = $line;
-                Log::debug('Found website_event line start', ['line_number' => $lineCount]);
-            } elseif ($inEventInsert) {
-                $currentEventData .= ' ' . trim($line);
-                
-                // Vérifier si c'est la fin de l'INSERT (contient des parenthèses fermantes)
-                if (str_contains($line, ');')) {
-                    $eventsData = $this->extractWebsiteEventData($currentEventData, $sitesMap);
-                    if (!empty($eventsData)) {
-                        Log::info('Extracted website_event data', ['events_count' => count($eventsData)]);
-                        
-                        foreach ($eventsData as $data) {
-                            // Séparer les pageviews des events
-                            if ($data['event_type'] === '1' || $data['event_type'] === 1) {
-                                // event_type = 1 signifie pageview dans Umami
-                                $pageViewBatch[] = $this->convertToPageView($data, $sessionsMap);
-                                $pageviewLines++;
-                            } elseif ($data['event_type'] === '2' || $data['event_type'] === 2) {
-                                // event_type = 2 signifie event dans Umami
-                                $eventBatch[] = $this->convertToEvent($data, $sessionsMap);
-                            }
-                        }
-                    } else {
-                        Log::warning('Failed to extract website_event data', ['data' => substr($currentEventData, 0, 200)]);
+
+                // Continuer à lire jusqu'à la fin de l'INSERT
+                while (($line = $this->readLine($handle)) !== false) {
+                    $lineCount++;
+                    $currentEventData .= ' '.trim($line);
+
+                    if (str_contains($line, ');')) {
+                        break;
                     }
-                    
-                    $inEventInsert = false;
-                    $currentEventData = '';
                 }
-            }
 
-            // Insérer par batch
-            if (count($pageViewBatch) >= self::BATCH_SIZE) {
-                $this->insertBatch('page_views', $pageViewBatch, $stats);
-                $pageViewBatch = [];
-                $stats['batches_processed']++;
-            }
+                // Traiter les données d'événements avec agrégation
+                $events = $this->extractWebsiteEventData($currentEventData, $sitesMap);
+                $this->processEventsWithAggregation($events, $stats);
 
-            if (count($eventBatch) >= self::BATCH_SIZE) {
-                $this->insertBatch('events', $eventBatch, $stats);
-                $eventBatch = [];
-                $stats['batches_processed']++;
+                $inEventInsert = false;
+                $currentEventData = '';
             }
         }
 
-        // Insérer les derniers batches
-        if (!empty($pageViewBatch)) {
-            $this->insertBatch('page_views', $pageViewBatch, $stats);
-            $stats['batches_processed']++;
-        }
-        if (!empty($eventBatch)) {
-            $this->insertBatch('events', $eventBatch, $stats);
-            $stats['batches_processed']++;
-        }
-
-        Log::info('UmamiImportService: Data chunk processing complete', [
+        Log::info('UmamiImportService: Data chunk processing with aggregation complete', [
             'start_line' => $startLine,
             'end_line' => $endLine,
-            'pageview_lines' => $pageviewLines,
             'event_lines' => $eventLines,
             'page_views' => $stats['page_views'] ?? 0,
             'events' => $stats['events'] ?? 0,
@@ -476,32 +395,449 @@ class UmamiImportService
         $this->closeFile($handle);
     }
 
+    private function processEventsWithAggregation(array $events, array &$stats): void
+    {
+        foreach ($events as $event) {
+            $createdAt = Carbon::parse($event['created_at']);
+            $siteId = $event['site_id'];
+            $sessionId = $event['session_id'];
+            $url = $event['url_path'];
+            $referrer = $event['referrer_domain'];
+            $eventType = $event['event_type'];
+            $eventName = $event['event_name'];
+
+            // Compter les événements
+            if ($eventType === '1') { // Pageview dans Umami
+                $stats['page_views']++;
+            } else {
+                $stats['events']++;
+            }
+
+            // Agrégation horaire
+            $hourKey = $siteId.'_'.$createdAt->format('Y-m-d_H');
+            if (! isset($this->hourlyAggregations[$hourKey])) {
+                $this->hourlyAggregations[$hourKey] = [
+                    'site_id' => $siteId,
+                    'hour_start' => $createdAt->startOfHour(),
+                    'page_views' => 0,
+                    'unique_visitors' => [],
+                    'top_pages' => [],
+                    'referrers' => [],
+                    'events' => 0,
+                ];
+            }
+
+            $hourly = &$this->hourlyAggregations[$hourKey];
+
+            if ($eventType === '1') {
+                $hourly['page_views']++;
+                $hourly['unique_visitors'][] = $sessionId;
+
+                // Top pages
+                if (! isset($hourly['top_pages'][$url])) {
+                    $hourly['top_pages'][$url] = 0;
+                }
+                $hourly['top_pages'][$url]++;
+
+                // Top referrers
+                if ($referrer) {
+                    if (! isset($hourly['referrers'][$referrer])) {
+                        $hourly['referrers'][$referrer] = 0;
+                    }
+                    $hourly['referrers'][$referrer]++;
+                }
+            } else {
+                $hourly['events']++;
+            }
+
+            // Agrégation quotidienne
+            $dayKey = $siteId.'_'.$createdAt->format('Y-m-d');
+            if (! isset($this->dailyAggregations[$dayKey])) {
+                $this->dailyAggregations[$dayKey] = [
+                    'site_id' => $siteId,
+                    'date' => $createdAt->toDateString(),
+                    'page_views' => 0,
+                    'unique_visitors' => [],
+                    'top_pages' => [],
+                    'referrers' => [],
+                    'events' => 0,
+                ];
+            }
+
+            $daily = &$this->dailyAggregations[$dayKey];
+
+            if ($eventType === '1') {
+                $daily['page_views']++;
+                $daily['unique_visitors'][] = $sessionId;
+
+                // Top pages
+                if (! isset($daily['top_pages'][$url])) {
+                    $daily['top_pages'][$url] = 0;
+                }
+                $daily['top_pages'][$url]++;
+
+                // Top referrers
+                if ($referrer) {
+                    if (! isset($daily['referrers'][$referrer])) {
+                        $daily['referrers'][$referrer] = 0;
+                    }
+                    $daily['referrers'][$referrer]++;
+                }
+            } else {
+                $daily['events']++;
+            }
+
+            // Agrégation mensuelle
+            $monthKey = $siteId.'_'.$createdAt->format('Y-m');
+            if (! isset($this->monthlyAggregations[$monthKey])) {
+                $this->monthlyAggregations[$monthKey] = [
+                    'site_id' => $siteId,
+                    'year_month' => $createdAt->format('Y-m'),
+                    'page_views' => 0,
+                    'unique_visitors' => [],
+                    'top_pages' => [],
+                    'referrers' => [],
+                    'events' => 0,
+                ];
+            }
+
+            $monthly = &$this->monthlyAggregations[$monthKey];
+
+            if ($eventType === '1') {
+                $monthly['page_views']++;
+                $monthly['unique_visitors'][] = $sessionId;
+
+                // Top pages
+                if (! isset($monthly['top_pages'][$url])) {
+                    $monthly['top_pages'][$url] = 0;
+                }
+                $monthly['top_pages'][$url]++;
+
+                // Top referrers
+                if ($referrer) {
+                    if (! isset($monthly['referrers'][$referrer])) {
+                        $monthly['referrers'][$referrer] = 0;
+                    }
+                    $monthly['referrers'][$referrer]++;
+                }
+            } else {
+                $monthly['events']++;
+            }
+
+            // Insérer par batch pour éviter la surcharge mémoire
+            if (count($this->hourlyAggregations) >= self::BATCH_SIZE) {
+                $this->insertAggregationsBatch($stats);
+            }
+        }
+    }
+
+    private function insertAggregationsBatch(array &$stats): void
+    {
+        // Insérer les agrégations horaires
+        foreach ($this->hourlyAggregations as $key => $hourly) {
+            $uniqueVisitorsCount = count(array_unique($hourly['unique_visitors']));
+
+            // Top pages (top 10)
+            arsort($hourly['top_pages']);
+            $topPages = array_slice($hourly['top_pages'], 0, 10, true);
+            $topPagesArray = array_map(fn ($url, $count) => ['url' => $url, 'count' => $count], array_keys($topPages), $topPages);
+
+            // Top referrers (top 10)
+            arsort($hourly['referrers']);
+            $topReferrers = array_slice($hourly['referrers'], 0, 10, true);
+            $topReferrersArray = array_map(fn ($referrer, $count) => ['referrer' => $referrer, 'count' => $count], array_keys($topReferrers), $topReferrers);
+
+            // Check if aggregation already exists
+            $existing = DB::table('analytics_hourly')
+                ->where('site_id', $hourly['site_id'])
+                ->where('hour_start', $hourly['hour_start'])
+                ->first();
+
+            if ($existing) {
+                // Merge with existing data
+                $existingTopPages = json_decode($existing->top_pages ?? '[]', true) ?: [];
+                $existingReferrers = json_decode($existing->referrers ?? '[]', true) ?: [];
+
+                // Merge and sum top pages
+                $mergedTopPages = $this->mergeTopData($existingTopPages, $topPagesArray, 10);
+
+                // Merge and sum referrers
+                $mergedReferrers = $this->mergeTopData($existingReferrers, $topReferrersArray, 10);
+
+                DB::table('analytics_hourly')
+                    ->where('site_id', $hourly['site_id'])
+                    ->where('hour_start', $hourly['hour_start'])
+                    ->update([
+                        'page_views' => DB::raw('page_views + '.$hourly['page_views']),
+                        'unique_visitors' => DB::raw('unique_visitors + '.$uniqueVisitorsCount),
+                        'top_pages' => json_encode($mergedTopPages),
+                        'referrers' => json_encode($mergedReferrers),
+                        'updated_at' => now(),
+                    ]);
+            } else {
+                // Insert new aggregation
+                DB::table('analytics_hourly')->insert([
+                    'site_id' => $hourly['site_id'],
+                    'hour_start' => $hourly['hour_start'],
+                    'page_views' => $hourly['page_views'],
+                    'unique_visitors' => $uniqueVisitorsCount,
+                    'top_pages' => json_encode($topPagesArray),
+                    'referrers' => json_encode($topReferrersArray),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            $stats['hourly_aggregations']++;
+        }
+
+        // Insérer les agrégations quotidiennes
+        foreach ($this->dailyAggregations as $key => $daily) {
+            $uniqueVisitorsCount = count(array_unique($daily['unique_visitors']));
+
+            // Top pages (top 20)
+            arsort($daily['top_pages']);
+            $topPages = array_slice($daily['top_pages'], 0, 20, true);
+            $topPagesArray = array_map(fn ($url, $count) => ['url' => $url, 'count' => $count], array_keys($topPages), $topPages);
+
+            // Top referrers (top 20)
+            arsort($daily['referrers']);
+            $topReferrers = array_slice($daily['referrers'], 0, 20, true);
+            $topReferrersArray = array_map(fn ($referrer, $count) => ['referrer' => $referrer, 'count' => $count], array_keys($topReferrers), $topReferrers);
+
+            // Check if aggregation already exists
+            $existing = DB::table('analytics_daily')
+                ->where('site_id', $daily['site_id'])
+                ->where('date', $daily['date'])
+                ->first();
+
+            if ($existing) {
+                // Merge with existing data
+                $existingTopPages = json_decode($existing->top_pages ?? '[]', true) ?: [];
+                $existingReferrers = json_decode($existing->referrers ?? '[]', true) ?: [];
+
+                // Merge and sum top pages
+                $mergedTopPages = $this->mergeTopData($existingTopPages, $topPagesArray, 20);
+
+                // Merge and sum referrers
+                $mergedReferrers = $this->mergeTopData($existingReferrers, $topReferrersArray, 20);
+
+                DB::table('analytics_daily')
+                    ->where('site_id', $daily['site_id'])
+                    ->where('date', $daily['date'])
+                    ->update([
+                        'page_views' => DB::raw('page_views + '.$daily['page_views']),
+                        'unique_visitors' => DB::raw('unique_visitors + '.$uniqueVisitorsCount),
+                        'top_pages' => json_encode($mergedTopPages),
+                        'referrers' => json_encode($mergedReferrers),
+                        'updated_at' => now(),
+                    ]);
+            } else {
+                // Insert new aggregation
+                DB::table('analytics_daily')->insert([
+                    'site_id' => $daily['site_id'],
+                    'date' => $daily['date'],
+                    'page_views' => $daily['page_views'],
+                    'unique_visitors' => $uniqueVisitorsCount,
+                    'top_pages' => json_encode($topPagesArray),
+                    'referrers' => json_encode($topReferrersArray),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            $stats['daily_aggregations']++;
+        }
+
+        // Insérer les agrégations mensuelles
+        foreach ($this->monthlyAggregations as $key => $monthly) {
+            $uniqueVisitorsCount = count(array_unique($monthly['unique_visitors']));
+
+            // Top pages (top 50)
+            arsort($monthly['top_pages']);
+            $topPages = array_slice($monthly['top_pages'], 0, 50, true);
+            $topPagesArray = array_map(fn ($url, $count) => ['url' => $url, 'count' => $count], array_keys($topPages), $topPages);
+
+            // Top referrers (top 50)
+            arsort($monthly['referrers']);
+            $topReferrers = array_slice($monthly['referrers'], 0, 50, true);
+            $topReferrersArray = array_map(fn ($referrer, $count) => ['referrer' => $referrer, 'count' => $count], array_keys($topReferrers), $topReferrers);
+
+            // Check if aggregation already exists
+            $existing = DB::table('analytics_monthly')
+                ->where('site_id', $monthly['site_id'])
+                ->where('year_month', $monthly['year_month'])
+                ->first();
+
+            if ($existing) {
+                // Merge with existing data
+                $existingTopPages = json_decode($existing->top_pages ?? '[]', true) ?: [];
+                $existingReferrers = json_decode($existing->referrers ?? '[]', true) ?: [];
+
+                // Merge and sum top pages
+                $mergedTopPages = $this->mergeTopData($existingTopPages, $topPagesArray, 50);
+
+                // Merge and sum referrers
+                $mergedReferrers = $this->mergeTopData($existingReferrers, $topReferrersArray, 50);
+
+                DB::table('analytics_monthly')
+                    ->where('site_id', $monthly['site_id'])
+                    ->where('year_month', $monthly['year_month'])
+                    ->update([
+                        'page_views' => DB::raw('page_views + '.$monthly['page_views']),
+                        'unique_visitors' => DB::raw('unique_visitors + '.$uniqueVisitorsCount),
+                        'top_pages' => json_encode($mergedTopPages),
+                        'referrers' => json_encode($mergedReferrers),
+                        'updated_at' => now(),
+                    ]);
+            } else {
+                // Insert new aggregation
+                DB::table('analytics_monthly')->insert([
+                    'site_id' => $monthly['site_id'],
+                    'year_month' => $monthly['year_month'],
+                    'page_views' => $monthly['page_views'],
+                    'unique_visitors' => $uniqueVisitorsCount,
+                    'top_pages' => json_encode($topPagesArray),
+                    'referrers' => json_encode($topReferrersArray),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            $stats['monthly_aggregations']++;
+        }
+
+        // Vider les tableaux d'agrégation
+        $this->hourlyAggregations = [];
+        $this->dailyAggregations = [];
+        $this->monthlyAggregations = [];
+
+        $stats['batches_processed']++;
+    }
+
+    /**
+     * Merge and sum top data arrays (pages or referrers)
+     */
+    private function mergeTopData(array $existing, array $new, int $limit = 20): array
+    {
+        $merged = [];
+
+        // Add existing data
+        foreach ($existing as $item) {
+            $key = isset($item['url']) ? $item['url'] : $item['referrer'];
+            $merged[$key] = $item['count'];
+        }
+
+        // Add new data and sum if key exists
+        foreach ($new as $item) {
+            $key = isset($item['url']) ? $item['url'] : $item['referrer'];
+            if (isset($merged[$key])) {
+                $merged[$key] += $item['count'];
+            } else {
+                $merged[$key] = $item['count'];
+            }
+        }
+
+        // Sort by count and take top items
+        arsort($merged);
+
+        $result = [];
+        $count = 0;
+        foreach ($merged as $key => $value) {
+            if ($count >= $limit) {
+                break;
+            }
+
+            $item = isset($new[0]['url'])
+                ? ['url' => $key, 'count' => $value]
+                : ['referrer' => $key, 'count' => $value];
+            $result[] = $item;
+            $count++;
+        }
+
+        return $result;
+    }
+
+    private function insertChunkAggregations(array &$stats): void
+    {
+        $this->insertAggregationsBatch($stats);
+    }
+
+    private function insertFinalAggregations(array &$stats): void
+    {
+        if (! empty($this->hourlyAggregations) || ! empty($this->dailyAggregations) || ! empty($this->monthlyAggregations)) {
+            $this->insertAggregationsBatch($stats);
+        }
+    }
+
+    private function processSessions(string $filePath, int $startLine, int $endLine, array $sitesMap): array
+    {
+        $sessionsMap = []; // session_id => session_data
+        $handle = $this->openFile($filePath);
+        $lineCount = 0;
+
+        Log::info('UmamiImportService: Processing sessions for chunk', [
+            'start_line' => $startLine,
+            'end_line' => $endLine,
+        ]);
+
+        while (($line = $this->readLine($handle)) !== false) {
+            $lineCount++;
+
+            // Ignorer les lignes hors du chunk
+            if ($lineCount < $startLine || $lineCount > $endLine) {
+                continue;
+            }
+
+            if (str_contains(strtolower($line), 'insert into `session`')) {
+                $sessionsData = $this->extractSessionData($line);
+                if (! empty($sessionsData)) {
+                    Log::info('Extracted sessions data', ['sessions_count' => count($sessionsData)]);
+
+                    foreach ($sessionsData as $sessionData) {
+                        $sessionsMap[$sessionData['session_id']] = $sessionData;
+                    }
+                }
+            }
+        }
+
+        $this->closeFile($handle);
+
+        Log::info('UmamiImportService: Sessions processing complete', [
+            'sessions_found' => count($sessionsMap),
+        ]);
+
+        return $sessionsMap;
+    }
+
     private function extractWebsiteData(string $line): array
     {
         // Debug: log la ligne pour voir le format
         Log::debug('Extracting website data from line', ['line' => substr($line, 0, 200)]);
-        
+
         $websites = [];
-        
+
         // Extraire toutes les valeurs du INSERT multi-lignes
         if (preg_match('/VALUES\s*(.+)/i', $line, $matches)) {
             $valuesString = trim($matches[1]);
             if (substr($valuesString, -1) === ';') {
                 $valuesString = substr($valuesString, 0, -1);
             }
-            
+
             // Diviser par les parenthèses fermantes pour obtenir chaque ligne de valeurs
             $valueLines = preg_split('/\),\s*\(/', $valuesString);
-            
+
             foreach ($valueLines as $valueLine) {
                 // Nettoyer les parenthèses
                 $valueLine = trim($valueLine, '()');
-                if (empty($valueLine)) continue;
-                
+                if (empty($valueLine)) {
+                    continue;
+                }
+
                 $values = $this->parseSqlValues($valueLine);
-                
+
                 Log::debug('Parsed website values', ['values' => $values]);
-                
+
                 if (count($values) >= 3) {
                     // Structure Umami website: website_id, name, domain, share_id, reset_at, user_id, created_at, updated_at, deleted_at, created_by, team_id
                     $websites[] = [
@@ -515,7 +851,7 @@ class UmamiImportService
                 }
             }
         }
-        
+
         return $websites;
     }
 
@@ -523,9 +859,9 @@ class UmamiImportService
     {
         // Chercher un site existant avec le même nom ou domaine
         $site = Site::where('user_id', $this->userId)
-            ->where(function($query) use ($websiteData) {
+            ->where(function ($query) use ($websiteData) {
                 $query->where('name', $websiteData['name'])
-                      ->orWhere('domain', $websiteData['domain']);
+                    ->orWhere('domain', $websiteData['domain']);
             })
             ->first();
 
@@ -535,6 +871,7 @@ class UmamiImportService
                 'name' => $websiteData['name'],
                 'domain' => $websiteData['domain'],
             ]);
+
             return $site;
         }
 
@@ -549,35 +886,37 @@ class UmamiImportService
 
     private function generateTrackingId(): string
     {
-        return 'site_' . uniqid() . '_' . time();
+        return 'site_'.uniqid().'_'.time();
     }
 
     private function extractSessionData(string $line): array
     {
         // Debug: log la ligne pour voir le format
         Log::debug('Extracting session data from line', ['line' => substr($line, 0, 200)]);
-        
+
         $sessions = [];
-        
+
         // Extraire toutes les valeurs du INSERT multi-lignes
         if (preg_match('/INSERT INTO `session`[^)]+\) VALUES\s*(.+)/i', $line, $matches)) {
             $valuesString = trim($matches[1]);
             if (substr($valuesString, -1) === ';') {
                 $valuesString = substr($valuesString, 0, -1);
             }
-            
+
             // Diviser par les parenthèses fermantes pour obtenir chaque ligne de valeurs
             $valueLines = preg_split('/\),\s*\(/', $valuesString);
-            
+
             foreach ($valueLines as $valueLine) {
                 // Nettoyer les parenthèses
                 $valueLine = trim($valueLine, '()');
-                if (empty($valueLine)) continue;
-                
+                if (empty($valueLine)) {
+                    continue;
+                }
+
                 $values = $this->parseSqlValues($valueLine);
-                
+
                 Log::debug('Parsed session values', ['values' => $values]);
-                
+
                 if (count($values) < 10) {
                     continue;
                 }
@@ -599,7 +938,7 @@ class UmamiImportService
                 ];
             }
         }
-        
+
         return $sessions;
     }
 
@@ -607,48 +946,50 @@ class UmamiImportService
     {
         // Debug: log la ligne pour voir le format
         Log::debug('Extracting website_event data from line', ['line' => substr($line, 0, 200)]);
-        
+
         $events = [];
-        
+
         // Extraire toutes les valeurs du INSERT multi-lignes
         if (preg_match('/INSERT INTO `website_event`[^)]+\) VALUES\s*(.+)/i', $line, $matches)) {
             $valuesString = trim($matches[1]);
             if (substr($valuesString, -1) === ';') {
                 $valuesString = substr($valuesString, 0, -1);
             }
-            
+
             // Diviser par les parenthèses fermantes pour obtenir chaque ligne de valeurs
             $valueLines = preg_split('/\),\s*\(/', $valuesString);
-            
+
             foreach ($valueLines as $valueLine) {
                 // Nettoyer les parenthèses
                 $valueLine = trim($valueLine, '()');
-                if (empty($valueLine)) continue;
-                
+                if (empty($valueLine)) {
+                    continue;
+                }
+
                 $values = $this->parseSqlValues($valueLine);
-                
+
                 Log::debug('Parsed website_event values', ['values' => $values]);
-                
+
                 if (count($values) < 10) {
                     continue;
                 }
 
                 $websiteId = $values[1] ?? null;
-                if (!$websiteId) {
+                if (! $websiteId) {
                     continue;
                 }
-                
+
                 // Si le site n'existe pas dans notre map, le créer automatiquement
-                if (!isset($sitesMap[$websiteId])) {
+                if (! isset($sitesMap[$websiteId])) {
                     Log::info('Creating missing site automatically', ['website_id' => $websiteId]);
-                    
+
                     $site = Site::create([
                         'user_id' => $this->userId,
-                        'name' => 'Site ' . substr($websiteId, 0, 8), // Nom basé sur l'ID
-                        'domain' => 'unknown-' . substr($websiteId, 0, 8) . '.com',
+                        'name' => 'Site '.substr($websiteId, 0, 8), // Nom basé sur l'ID
+                        'domain' => 'unknown-'.substr($websiteId, 0, 8).'.com',
                         'tracking_id' => $this->generateTrackingId(),
                     ]);
-                    
+
                     $sitesMap[$websiteId] = $site;
                 }
 
@@ -675,19 +1016,19 @@ class UmamiImportService
                 ];
             }
         }
-        
+
         return $events;
     }
 
     private function convertToPageView(array $websiteEventData, array $sessionsMap = []): array
     {
         $sessionData = $sessionsMap[$websiteEventData['session_id']] ?? [];
-        
+
         return [
             'site_id' => $websiteEventData['site_id'],
             'session_id' => $websiteEventData['session_id'],
-            'url' => $websiteEventData['url_path'] . ($websiteEventData['url_query'] ? '?' . $websiteEventData['url_query'] : ''),
-            'referrer' => $websiteEventData['referrer_domain'] . $websiteEventData['referrer_path'] . ($websiteEventData['referrer_query'] ? '?' . $websiteEventData['referrer_query'] : ''),
+            'url' => $websiteEventData['url_path'].($websiteEventData['url_query'] ? '?'.$websiteEventData['url_query'] : ''),
+            'referrer' => $websiteEventData['referrer_domain'].$websiteEventData['referrer_path'].($websiteEventData['referrer_query'] ? '?'.$websiteEventData['referrer_query'] : ''),
             'user_agent' => null, // Pas stocké dans website_event
             'ip_address' => null, // Pas stocké dans website_event
             'country' => $sessionData['country'] ?? null,
@@ -705,15 +1046,15 @@ class UmamiImportService
     private function convertToEvent(array $websiteEventData, array $sessionsMap = []): array
     {
         $sessionData = $sessionsMap[$websiteEventData['session_id']] ?? [];
-        
+
         return [
             'site_id' => $websiteEventData['site_id'],
             'session_id' => $websiteEventData['session_id'],
             'name' => $websiteEventData['event_name'],
             'properties' => json_encode([
-                'url' => $websiteEventData['url_path'] . ($websiteEventData['url_query'] ? '?' . $websiteEventData['url_query'] : ''),
+                'url' => $websiteEventData['url_path'].($websiteEventData['url_query'] ? '?'.$websiteEventData['url_query'] : ''),
                 'title' => $websiteEventData['page_title'],
-                'referrer' => $websiteEventData['referrer_domain'] . $websiteEventData['referrer_path'] . ($websiteEventData['referrer_query'] ? '?' . $websiteEventData['referrer_query'] : ''),
+                'referrer' => $websiteEventData['referrer_domain'].$websiteEventData['referrer_path'].($websiteEventData['referrer_query'] ? '?'.$websiteEventData['referrer_query'] : ''),
                 'tag' => $websiteEventData['tag'],
                 'hostname' => $websiteEventData['hostname'],
                 'device_type' => $sessionData['device'] ?? null,
@@ -722,7 +1063,7 @@ class UmamiImportService
                 'country' => $sessionData['country'] ?? null,
                 'city' => $sessionData['city'] ?? null,
             ]),
-            'url' => $websiteEventData['url_path'] . ($websiteEventData['url_query'] ? '?' . $websiteEventData['url_query'] : ''),
+            'url' => $websiteEventData['url_path'].($websiteEventData['url_query'] ? '?'.$websiteEventData['url_query'] : ''),
             'user_agent' => null, // Pas stocké dans website_event
             'ip_address' => null, // Pas stocké dans website_event
             'created_at' => $websiteEventData['created_at'],
@@ -750,29 +1091,64 @@ class UmamiImportService
 
     private function generateSessionId(): string
     {
-        return 'session_' . uniqid() . '_' . time();
+        return 'session_'.uniqid().'_'.time();
     }
 
     private function isGzipped(string $filePath): bool
     {
         $handle = fopen($filePath, 'rb');
-        if (!$handle) {
+        if (! $handle) {
             return false;
         }
-        
+
         $magic = fread($handle, 2);
         fclose($handle);
-        
+
         // Signature gzip: 0x1f 0x8b
         return $magic === "\x1f\x8b";
     }
 
     private function openFile(string $filePath)
     {
-        if ($this->isGzipped($filePath)) {
-            return gzopen($filePath, 'r');
-        } else {
-            return fopen($filePath, 'r');
+        if (! file_exists($filePath)) {
+            Log::error('File does not exist', ['filePath' => $filePath]);
+
+            return false;
+        }
+
+        if (! is_readable($filePath)) {
+            Log::error('File is not readable', ['filePath' => $filePath]);
+
+            return false;
+        }
+
+        try {
+            if ($this->isGzipped($filePath)) {
+                $handle = gzopen($filePath, 'r');
+                if ($handle === false) {
+                    Log::error('Failed to open gzipped file', ['filePath' => $filePath]);
+
+                    return false;
+                }
+
+                return $handle;
+            } else {
+                $handle = fopen($filePath, 'r');
+                if ($handle === false) {
+                    Log::error('Failed to open file', ['filePath' => $filePath]);
+
+                    return false;
+                }
+
+                return $handle;
+            }
+        } catch (\Exception $e) {
+            Log::error('Exception while opening file', [
+                'filePath' => $filePath,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
         }
     }
 
@@ -802,7 +1178,7 @@ class UmamiImportService
     {
         try {
             DB::table($table)->insert($data);
-            
+
             if ($table === 'page_views') {
                 $stats['page_views'] = ($stats['page_views'] ?? 0) + count($data);
             } elseif ($table === 'events') {
@@ -821,10 +1197,10 @@ class UmamiImportService
     {
         // Estimation basée sur le nombre d'enregistrements
         $totalRecords = $stats['page_views'] + $stats['events'];
-        
+
         // ~1000 records/second sur un serveur moyen
         $estimatedSeconds = $totalRecords / 1000;
-        
+
         return (int) max(30, $estimatedSeconds); // Minimum 30 secondes
     }
 
@@ -838,21 +1214,24 @@ class UmamiImportService
         for ($i = 0; $i < strlen($valuesString); $i++) {
             $char = $valuesString[$i];
 
-            if (!$inQuotes && ($char === "'" || $char === '"')) {
+            if (! $inQuotes && ($char === "'" || $char === '"')) {
                 $inQuotes = true;
                 $quoteChar = $char;
+
                 continue;
             }
 
             if ($inQuotes && $char === $quoteChar) {
                 $inQuotes = false;
                 $quoteChar = null;
+
                 continue;
             }
 
-            if (!$inQuotes && $char === ',') {
+            if (! $inQuotes && $char === ',') {
                 $values[] = trim($current);
                 $current = '';
+
                 continue;
             }
 
@@ -864,7 +1243,7 @@ class UmamiImportService
         }
 
         // Nettoyer les valeurs
-        return array_map(function($value) {
+        return array_map(function ($value) {
             $value = trim($value);
             if (empty($value)) {
                 return $value;
@@ -872,6 +1251,7 @@ class UmamiImportService
             if (($value[0] === "'" && $value[-1] === "'") || ($value[0] === '"' && $value[-1] === '"')) {
                 return substr($value, 1, -1);
             }
+
             return $value;
         }, $values);
     }

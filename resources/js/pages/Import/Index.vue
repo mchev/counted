@@ -361,7 +361,7 @@ interface Props {
 
 const props = defineProps<Props>()
 
-const selectedSite = ref<number | null>(null)
+
 const selectedFile = ref<File | null>(null)
 const dryRun = ref(false)
 const isImporting = ref(false)
@@ -445,7 +445,7 @@ const importUmami = async () => {
         if (fileInput) fileInput.value = ''
         
         // Si c'est un job en arrière-plan, rafraîchir la page pour voir le statut
-        if (page.props.flash?.job_queued) {
+        if (page.props.flash && typeof page.props.flash === 'object' && 'job_queued' in page.props.flash && page.props.flash.job_queued) {
           router.reload()
         }
       },

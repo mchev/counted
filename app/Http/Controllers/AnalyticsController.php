@@ -2,8 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Event;
-use App\Models\PageView;
+use App\Helpers\DatabaseHelper;
 use App\Models\Site;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -15,7 +14,7 @@ class AnalyticsController extends Controller
     public function dashboard(Request $request): Response
     {
         $user = $request->user();
-        $sites = $user->sites()->withCount(['pageViews', 'events'])->get();
+        $sites = $user->sites()->get();
 
         return Inertia::render('Dashboard', [
             'sites' => $sites,
@@ -69,7 +68,7 @@ class AnalyticsController extends Controller
 
         $totalPageViews = $pageViews->count();
         $uniqueVisitors = $pageViews->distinct('session_id')->count();
-        $bounceRate = $totalPageViews > 0 
+        $bounceRate = $totalPageViews > 0
             ? round(($pageViews->where('is_bounce', true)->count() / $totalPageViews) * 100, 2)
             : 0;
         $avgTimeOnPage = $pageViews->whereNotNull('time_on_page')->avg('time_on_page') ?? 0;
@@ -125,21 +124,10 @@ class AnalyticsController extends Controller
 
     private function getTopReferrers(Site $site, Carbon $startDate, Carbon $endDate): array
     {
-        return $site->pageViews()
-            ->forPeriod($startDate, $endDate)
-            ->whereNotNull('referrer')
-            ->selectRaw('referrer, COUNT(*) as count')
-            ->groupBy('referrer')
-            ->orderByDesc('count')
-            ->limit(10)
-            ->get()
-            ->map(function ($item) {
-                return [
-                    'referrer' => $item->referrer,
-                    'count' => $item->count,
-                ];
-            })
-            ->toArray();
+        return DatabaseHelper::getTopReferrersWithDirectAccess(
+            $site->pageViews()->forPeriod($startDate, $endDate),
+            10
+        );
     }
 
     private function getDeviceStats(Site $site, Carbon $startDate, Carbon $endDate): array
@@ -194,4 +182,4 @@ class AnalyticsController extends Controller
             })
             ->toArray();
     }
-} 
+}

@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Jobs\ProcessUmamiImport;
 use App\Models\ImportHistory;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 
 class ImportService
@@ -13,9 +12,9 @@ class ImportService
 
     public function importUmamiFromFtp(string $fileName, bool $dryRun = false): array
     {
-        $filePath = 'imports/' . $fileName;
-        $fullPath = storage_path('app/' . $filePath);
-        
+        $filePath = 'imports/'.$fileName;
+        $fullPath = storage_path('app/'.$filePath);
+
         // Debug pour voir ce qui se passe
         \Log::info('FTP import attempt', [
             'fileName' => $fileName,
@@ -25,11 +24,11 @@ class ImportService
             'file_exists' => file_exists($fullPath),
             'is_file' => is_file($fullPath),
         ]);
-        
-        if (!file_exists($fullPath)) {
+
+        if (! file_exists($fullPath)) {
             return [
                 'success' => false,
-                'message' => 'File not found in uploads directory: ' . $fileName,
+                'message' => 'File not found in uploads directory: '.$fileName,
             ];
         }
 
@@ -55,10 +54,10 @@ class ImportService
         try {
             // Créer le service avec l'ID utilisateur
             $umamiService = new UmamiImportService(auth()->id());
-            
+
             // Analyser rapidement le fichier pour l'estimation
             $quickStats = $umamiService->analyzeDump($fullPath);
-            
+
             // Mettre à jour avec les stats initiales et sites trouvés
             $importHistory->update([
                 'details' => array_merge(
@@ -70,7 +69,7 @@ class ImportService
                         'websites_found' => $quickStats['websites_found'],
                         'websites_count' => count($quickStats['websites_found']),
                     ]
-                )
+                ),
             ]);
 
             // Décider si on traite en synchrone ou asynchrone
@@ -97,7 +96,7 @@ class ImportService
                 // Traitement synchrone pour les petits fichiers
                 if ($dryRun) {
                     $stats = $umamiService->analyzeDump($fullPath);
-                    
+
                     $importHistory->update([
                         'status' => 'completed',
                         'summary' => "Dry run: {$stats['page_views']} page views, {$stats['events']} events found",
@@ -130,12 +129,12 @@ class ImportService
         } catch (\Exception $e) {
             $importHistory->update([
                 'status' => 'failed',
-                'summary' => 'Import failed: ' . $e->getMessage(),
+                'summary' => 'Import failed: '.$e->getMessage(),
             ]);
 
             return [
                 'success' => false,
-                'message' => 'Import failed: ' . $e->getMessage(),
+                'message' => 'Import failed: '.$e->getMessage(),
             ];
         }
     }
@@ -146,18 +145,21 @@ class ImportService
         // - Fichier > 50MB
         // - Plus de 100k enregistrements
         // - Temps estimé > 5 minutes
-        return $fileSize > 50 * 1024 * 1024 || 
+        return $fileSize > 50 * 1024 * 1024 ||
                ($stats['page_views'] + $stats['events']) > 100000 ||
                $stats['estimated_duration'] > 300;
     }
 
     private function formatBytes(int $bytes): string
     {
-        if ($bytes === 0) return '0 Bytes';
+        if ($bytes === 0) {
+            return '0 Bytes';
+        }
         $k = 1024;
         $sizes = ['Bytes', 'KB', 'MB', 'GB'];
         $i = floor(log($bytes) / log($k));
-        return round($bytes / pow($k, $i), 2) . ' ' . $sizes[$i];
+
+        return round($bytes / pow($k, $i), 2).' '.$sizes[$i];
     }
 
     public function getImportHistory(int $userId, int $limit = 10): \Illuminate\Database\Eloquent\Collection
@@ -167,4 +169,4 @@ class ImportService
             ->limit($limit)
             ->get();
     }
-} 
+}

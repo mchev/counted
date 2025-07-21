@@ -19,7 +19,7 @@ return new class extends Migration
             $table->text('summary')->nullable();
             $table->json('details')->nullable(); // Statistiques détaillées de l'import
             $table->timestamps();
-            
+
             $table->index(['user_id', 'created_at']);
             $table->index(['site_id', 'created_at']);
         });

@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('user_agent')->nullable();
             $table->string('ip_address')->nullable();
             $table->timestamps();
-            
+
             $table->index(['site_id', 'created_at']);
             $table->index(['site_id', 'name']);
             $table->index(['session_id']);
@@ -29,4 +29,4 @@ return new class extends Migration
     {
         Schema::dropIfExists('events');
     }
-}; 
+};

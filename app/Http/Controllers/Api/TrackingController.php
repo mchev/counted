@@ -8,7 +8,6 @@ use App\Http\Requests\TrackingRequest;
 use App\Models\Event;
 use App\Models\PageView;
 use App\Models\Site;
-use Illuminate\Http\Response;
 use Jenssegers\Agent\Agent;
 
 class TrackingController extends Controller
@@ -20,11 +19,11 @@ class TrackingController extends Controller
             ->where('is_active', true)
             ->first();
 
-        if (!$site) {
+        if (! $site) {
             return response()->json(['error' => 'Site not found'], 404);
         }
 
-        $agent = new Agent();
+        $agent = new Agent;
         $agent->setUserAgent($request->userAgent());
 
         $sessionId = $this->generateSessionId($request);
@@ -56,7 +55,7 @@ class TrackingController extends Controller
             ->where('is_active', true)
             ->first();
 
-        if (!$site) {
+        if (! $site) {
             return response()->json(['error' => 'Site not found'], 404);
         }
 
@@ -79,10 +78,10 @@ class TrackingController extends Controller
     {
         $userAgent = $request->userAgent();
         $ip = $request->ip();
-        
+
         // Create a session ID based on user agent and IP
         // In a real implementation, you might want to use cookies or more sophisticated session management
-        return md5($userAgent . $ip . date('Y-m-d'));
+        return md5($userAgent.$ip.date('Y-m-d'));
     }
 
     private function getDeviceType(Agent $agent): string
@@ -90,11 +89,11 @@ class TrackingController extends Controller
         if ($agent->isTablet()) {
             return 'tablet';
         }
-        
+
         if ($agent->isMobile()) {
             return 'mobile';
         }
-        
+
         return 'desktop';
     }
 
@@ -121,4 +120,4 @@ class TrackingController extends Controller
 
         return $existingViews === 0;
     }
-} 
+}

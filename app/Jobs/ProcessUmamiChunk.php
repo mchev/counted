@@ -3,7 +3,6 @@
 namespace App\Jobs;
 
 use App\Models\ImportHistory;
-use App\Models\Site;
 use App\Services\UmamiImportService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -17,6 +16,7 @@ class ProcessUmamiChunk implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public $timeout = 300; // 5 minutes
+
     public $tries = 3;
 
     public function __construct(
@@ -48,11 +48,11 @@ class ProcessUmamiChunk implements ShouldQueue
                 $currentDetails['page_views_imported'] = ($currentDetails['page_views_imported'] ?? 0) + ($stats['page_views'] ?? 0);
                 $currentDetails['events_imported'] = ($currentDetails['events_imported'] ?? 0) + ($stats['events'] ?? 0);
                 $currentDetails['chunks_processed'] = ($currentDetails['chunks_processed'] ?? 0) + 1;
-                
+
                 // Calculer le pourcentage de progression
                 $totalChunks = $currentDetails['total_chunks'] ?? 1;
                 $progress = round(($currentDetails['chunks_processed'] / $totalChunks) * 100, 1);
-                
+
                 $import->update([
                     'details' => $currentDetails,
                     'summary' => "Processing... {$progress}% complete - {$currentDetails['page_views_imported']} page views, {$currentDetails['events_imported']} events",

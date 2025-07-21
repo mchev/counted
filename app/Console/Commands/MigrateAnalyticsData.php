@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 class MigrateAnalyticsData extends Command
 {
     protected $signature = 'analytics:migrate {--days=30 : Nombre de jours à migrer}';
+
     protected $description = 'Migre les données analytics existantes vers les tables d\'agrégation';
 
     public function handle(): int
@@ -18,19 +19,20 @@ class MigrateAnalyticsData extends Command
         $this->info("Migration des données analytics des {$days} derniers jours...");
 
         $sites = Site::all();
-        
+
         foreach ($sites as $site) {
             $this->info("Migration pour le site: {$site->name}");
-            
+
             try {
                 $this->migrateSiteData($site, $days);
                 $this->info("✅ Site {$site->name} migré avec succès");
             } catch (\Exception $e) {
-                $this->error("❌ Erreur pour le site {$site->name}: " . $e->getMessage());
+                $this->error("❌ Erreur pour le site {$site->name}: ".$e->getMessage());
             }
         }
 
         $this->info('Migration terminée !');
+
         return 0;
     }
 
@@ -41,7 +43,7 @@ class MigrateAnalyticsData extends Command
 
         // Migration des données quotidiennes
         $this->migrateDailyData($site, $startDate, $endDate);
-        
+
         // Migration des données horaires (7 derniers jours)
         $hourlyStartDate = Carbon::now()->subDays(7)->startOfDay();
         $this->migrateHourlyData($site, $hourlyStartDate, $endDate);
@@ -50,18 +52,19 @@ class MigrateAnalyticsData extends Command
     private function migrateDailyData(Site $site, Carbon $startDate, Carbon $endDate): void
     {
         $current = $startDate->copy();
-        
+
         while ($current <= $endDate) {
             $date = $current->toDateString();
-            
+
             // Vérifier si les données existent déjà
             $exists = DB::table('analytics_daily')
                 ->where('site_id', $site->id)
                 ->where('date', $date)
                 ->exists();
-                
+
             if ($exists) {
                 $current->addDay();
+
                 continue;
             }
 
@@ -75,7 +78,7 @@ class MigrateAnalyticsData extends Command
 
             // Top pages du jour
             $topPages = $pageViews->groupBy('url')
-                ->map(fn($group) => ['page_url' => $group->first()->url, 'count' => $group->count()])
+                ->map(fn ($group) => ['page_url' => $group->first()->url, 'count' => $group->count()])
                 ->sortByDesc('count')
                 ->take(20)
                 ->values()
@@ -84,7 +87,7 @@ class MigrateAnalyticsData extends Command
             // Top referrers du jour
             $topReferrers = $pageViews->whereNotNull('referrer')
                 ->groupBy('referrer')
-                ->map(fn($group) => ['referrer' => $group->first()->referrer, 'count' => $group->count()])
+                ->map(fn ($group) => ['referrer' => $group->first()->referrer, 'count' => $group->count()])
                 ->sortByDesc('count')
                 ->take(20)
                 ->values()
@@ -109,19 +112,20 @@ class MigrateAnalyticsData extends Command
     private function migrateHourlyData(Site $site, Carbon $startDate, Carbon $endDate): void
     {
         $current = $startDate->copy()->startOfHour();
-        
+
         while ($current <= $endDate) {
             $hourStart = $current->copy();
             $hourEnd = $current->copy()->endOfHour();
-            
+
             // Vérifier si les données existent déjà
             $exists = DB::table('analytics_hourly')
                 ->where('site_id', $site->id)
                 ->where('hour_start', $hourStart)
                 ->exists();
-                
+
             if ($exists) {
                 $current->addHour();
+
                 continue;
             }
 
@@ -135,7 +139,7 @@ class MigrateAnalyticsData extends Command
 
             // Top pages de l'heure
             $topPages = $pageViews->groupBy('url')
-                ->map(fn($group) => ['page_url' => $group->first()->url, 'count' => $group->count()])
+                ->map(fn ($group) => ['page_url' => $group->first()->url, 'count' => $group->count()])
                 ->sortByDesc('count')
                 ->take(10)
                 ->values()
@@ -144,7 +148,7 @@ class MigrateAnalyticsData extends Command
             // Top referrers de l'heure
             $topReferrers = $pageViews->whereNotNull('referrer')
                 ->groupBy('referrer')
-                ->map(fn($group) => ['referrer' => $group->first()->referrer, 'count' => $group->count()])
+                ->map(fn ($group) => ['referrer' => $group->first()->referrer, 'count' => $group->count()])
                 ->sortByDesc('count')
                 ->take(10)
                 ->values()
@@ -165,4 +169,4 @@ class MigrateAnalyticsData extends Command
             $current->addHour();
         }
     }
-} 
+}

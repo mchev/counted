@@ -31,4 +31,4 @@ class SitePolicy
     {
         return $user->id === $site->user_id;
     }
-} 
+}

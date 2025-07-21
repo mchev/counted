@@ -58,8 +58,8 @@ class Site extends Model
     public function getTrackingScriptAttribute(): string
     {
         $baseUrl = config('app.url');
-        $scriptUrl = $baseUrl . '/analytics.js';
-        
+        $scriptUrl = $baseUrl.'/analytics.js';
+
         return "<script>
 (function() {
     var script = document.createElement('script');
@@ -71,4 +71,4 @@ class Site extends Model
 })();
 </script>";
     }
-} 
+}
