@@ -32,10 +32,6 @@ return new class extends Migration
             $table->index(['created_at']); // Global time-based queries
             $table->index(['session_id']); // Session-based queries
         });
-
-        // Add indexes for TEXT columns using Laravel methods (no key length, works for MySQL and SQLite)
-        $table->index(['site_id', 'url', 'created_at']);
-        $table->index(['site_id', 'referrer', 'created_at']);
     }
 
     public function down(): void
