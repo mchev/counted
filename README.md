@@ -29,14 +29,29 @@ Think of Counted as a privacy-respecting alternative to Google Analytics, simila
 | **Data Ownership**           | ✅ 100% yours   | ✅ 100% yours   | ✅ 100% yours   | ❌ Google-owned     |
 | **Pricing**                  | Free, open source | Paid (hosted) / Free (self-hosted) | Free, open source | Free (with data trade-off) |
 
-## Installation
+## Installation on production
+
+### With any web server
 
 1. Clone the repository
-2. Install dependencies: `composer install && npm install`
-3. Copy `.env.example` to `.env` and configure
+2. Install dependencies: `composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader`
+3. Copy `.env.example` to `.env` and configure your environment variables
 4. Run migrations: `php artisan migrate`
-5. Start the development server: `php artisan serve`
+5. Configure the Laravel scheduler to run every minute (e.g., using a cron job: `* * * * * cd /path/to/your/app && php artisan schedule:run >> /dev/null 2>&1`)
+6. Start Laravel Horizon for queue processing (e.g., `php artisan horizon`)
+7. (Optional) Set up Horizon as a daemon or service for automatic restarts
 
+### With Laravel Forge
+
+1. Connect your server to Forge and create a new site.
+2. Link `https://github.com/mchev/counted.git` repository on `main` branch and deploy the code.
+3. In the "Environment" tab, set your environment variables (database).
+4. In the "Deploy Script", ensure you have:
+    - `composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader`
+    - `php artisan migrate --force`
+5. In the "Application" tab, enable "Laravel Scheduler".
+6. In the "Application" tab, enable "Laravel Horizon".
+7. Deploy your site. Forge will handle the rest, including keeping Horizon running and the scheduler active.
 
 ## Aggregation System
 
@@ -55,18 +70,6 @@ php artisan analytics:aggregate
 # Schedule aggregation (Laravel 12)
 # Configured in routes/console.php
 ```
-
-### Laravel Forge Setup
-
-1. Enable the Laravel scheduler:
-   - In Forge, add a scheduled job with the command:  
-     `* * * * * cd /path/to/your/app && php artisan schedule:run >> /dev/null 2>&1`
-
-2. Enable Laravel Horizon:
-   - In Forge, add a new Daemon with the command:  
-     `php /path/to/your/app/artisan horizon`
-   - Set the user to `forge` and the directory to `/path/to/your/app`
-   - Enable auto-restart for the daemon
 
 ## Import System
 
