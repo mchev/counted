@@ -1,4 +1,4 @@
-# Counted Analytics
+# Counted Analytics (Work in progress)
 
 A privacy-focused, self-hosted analytics platform built with Laravel 12 and Vue 3. Counted is an alternative to Google Analytics that respects user privacy while providing powerful insights into your website traffic.
 
